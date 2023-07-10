@@ -23,6 +23,7 @@ int OpenSCAD::traceDepth = 12;
 bool OpenSCAD::traceUsermoduleParameters = true;
 bool OpenSCAD::parameterCheck = true;
 bool OpenSCAD::rangeCheck = false;
+int OpenSCAD::gs_debug = 0;
 
 boost::circular_buffer<std::string> lastmessages(5);
 boost::circular_buffer<struct Message> lastlogmessages(5);

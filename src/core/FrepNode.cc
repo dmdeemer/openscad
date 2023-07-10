@@ -381,6 +381,35 @@ void split_metaloops(libfive::Tree &tr, std::vector<SDFVertex> &vert, std::vecto
 	}
 	while(1);
 }
+void debug_point(PolySet *p, SDFVertex &vert) 
+{
+	double size=0.3;
+	Vector3d tmp(0,1,0),xdir, ydir;
+	// zdir = vert.norm
+	xdir=vert.norm.cross(tmp);
+	ydir=vert.norm.cross(xdir);
+	xdir.normalize();
+	ydir.normalize();
+			
+
+	Vector3d p1,p2,p3;
+	p1=vert.pos+(vert.norm+xdir)*size;
+
+	p->append_poly(3);
+	tmp=vert.pos; p->append_vertex(tmp[0],tmp[1],tmp[2]);
+	tmp=vert.pos+(vert.norm-xdir*0.5+ydir*0.866)*size; p->append_vertex(tmp[0],tmp[1],tmp[2]);
+	tmp=vert.pos+(vert.norm+xdir)*size; p->append_vertex(tmp[0],tmp[1],tmp[2]);
+
+	p->append_poly(3);
+	tmp=vert.pos; p->append_vertex(tmp[0],tmp[1],tmp[2]);
+	tmp=vert.pos+(vert.norm-xdir*0.5-ydir*0.866)*size; p->append_vertex(tmp[0],tmp[1],tmp[2]);
+	tmp=vert.pos+(vert.norm-xdir*0.5+ydir*0.866)*size; p->append_vertex(tmp[0],tmp[1],tmp[2]);
+
+	p->append_poly(3);
+	tmp=vert.pos; p->append_vertex(tmp[0],tmp[1],tmp[2]);
+	tmp=vert.pos+(vert.norm+xdir)*size; p->append_vertex(tmp[0],tmp[1],tmp[2]);
+	tmp=vert.pos+(vert.norm-xdir*0.5-ydir*0.866)*size; p->append_vertex(tmp[0],tmp[1],tmp[2]);
+}
 
 PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 {
@@ -428,20 +457,34 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 	}
 	printf("start normal splitting\n");
 	int round=0; // TODO weg
-	while(tris_work.size() > 0) {
+	while(round <= OpenSCAD::gs_debug ) 
+	{
 		std::vector<SDFTriangle> tris_new;
 		std::unordered_map<SDFTwoInd, int,boost::hash<SDFTwoInd> > edges;
 		printf("Round %d tris_work is %d\n",round,tris_work.size());
+		int ind1,ind2;
+		Vector3d p1, p2;
 
+		double maxdist=0.0; // find out maximal distance
+		for(int i=0;i<tris_work.size();i++) {
+			double dist;
+			for(int j=0;j<3;j++) {
+				ind1=tri.i[j];
+				ind2=tri.i[(j+1)%3];
+				p1=vert[ind1].pos;
+				p2=vert[ind2].pos;
+				dist=(p2-p1).norm();
+				if(maxdist == 0 || dist > maxdist) maxdist=dist;
+			}
+		}
+		printf("max dist is %g\n",maxdist);
+		// jede kante  preufen und  schauen ob sie gesplittetwerden muss, dann neuen index ausrechnen
 		for(int i=0;i<tris_work.size();i++) {
 			tri=tris_work[i];
-			Vector3d p1, p2;
 			SDFVertex pmid;
 			pmid.opt=0;
 			double dist;
 			SDFTwoInd e;
-			int ind1,ind2;
-			// jede kante  preufen und  schauen ob sie gesplittetwerden muss, dann neuen index ausrechnen
 			for(int j=0;j<3;j++) {
 				ind1=tri.i[j];
 				ind2=tri.i[(j+1)%3];
@@ -452,27 +495,41 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 					p2=vert[ind2].pos;
 					dist=(p2-p1).norm();
 					gboolean split=true;
-					if(dist < 0.3) split=false;
+					if(dist < maxdist/sqrt(2)) split=false;
+					if(dist < tol) split=false;
 				        if(count >1000 ) split=false;
 					if(vert[ind1].opt & OPT_META) split=false;
 					if(vert[ind2].opt & OPT_META) split=false;
-					if(round >1 ) split=false; // TODO weg // TODO parameter
 					if(split){
 						printf("Split %d/%d\n",i,j);
-						double ratio=0.5; // 0.618; // golden ratio // TODO != 0.5 wird sehr unschoen
-						if(round&1) ratio=1-ratio;								   
-						pmid.pos=p1*ratio+p2*(1-ratio);
-						pmid.opt=0;
-						printf("norm from %g/%g/%g and %g/%g/%g\n",vert[ind1].norm[0],vert[ind1].norm[1],vert[ind1].norm[2],vert[ind2].norm[0],vert[ind2].norm[1],vert[ind2].norm[2]);
-						pmid.norm =vert[ind1].norm*ratio+vert[ind2].norm*(1-ratio);
-						pmid.norm.normalize();
-						printf("start align\n");
-						if(SDF_align(tr,pmid,tol))
+						// TODO nach und nach 1/2, 1/3, 2/3 probieren
+						int mode;
+						double ratio=1.0;
+						for( mode=0;mode<3;mode++)
 						{
+							printf("mode=%d\n",mode);
+							switch(mode)
+							{
+								case 0: ratio=1.0/2.0; break;
+								case 1: ratio=1.0/3.0; break;
+								case 2: ratio=2.0/3.0; break;
+							}
+							pmid.pos=p1*ratio+p2*(1-ratio);
+							pmid.opt=0;
+							printf("norm from %g/%g/%g and %g/%g/%g\n",vert[ind1].norm[0],vert[ind1].norm[1],vert[ind1].norm[2],vert[ind2].norm[0],vert[ind2].norm[1],vert[ind2].norm[2]);
+							pmid.norm =vert[ind1].norm*ratio+vert[ind2].norm*(1-ratio);
+							pmid.norm.normalize();
+							printf("start align\n");
+							if(!SDF_align(tr,pmid,tol)){
+							       	break;
+								printf("Success break\n");
+							}
+							printf("end align\n");
+						}
+						if(mode == 3) {
 							pmid.pos=p1*ratio+p2*(1-ratio);
 							pmid.opt=OPT_META;
 						}
-						printf("end align\n");
 						
 						edges[e]=vert.size(); // new index
 						vert.push_back(pmid);
@@ -499,7 +556,7 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 			}
 			SDFTriangle tri_new; 
 			if(si[2] == -1 && si[1] == -1 && si[0] == -1) {
-				tris_finished.push_back(tri);
+				tris_new.push_back(tri);
 
 			} else if(si[2] == -1 && si[1] == -1 && si[0] != -1) {
 				tri_new.i[0]=tri.i[0]; tri_new.i[1]=si[0]; tri_new.i[2]=tri.i[2]; tris_new.push_back(tri_new);
@@ -538,14 +595,20 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 		tris_work = tris_new;
 		round++;
 	}
-	//
 	auto p = new PolySet(3, true);
+	tris_finished = tris_work;
 	printf("%d Points and %d Triangles generated\n",vert.size(),tris_finished.size());
 	for(int i=0;i<tris_finished.size();i++) {
 		p->append_poly(3);
 		for(int j=0;j<3;j++) {
 			int ind=tris_finished[i].i[j];
 			p->append_vertex(vert[ind].pos[0],vert[ind].pos[1],vert[ind].pos[2]);
+		}
+	}
+	// now mark the META edges
+	for(int i=0;i<vert.size();i++) {
+		if(vert[i].opt & OPT_META) {
+			debug_point(p, vert[i]);
 		}
 	}
 	return p;

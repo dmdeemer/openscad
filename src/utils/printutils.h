@@ -86,6 +86,7 @@ extern std::string debug;
 extern bool quiet;
 extern bool hardwarnings;
 extern int traceDepth;
+extern int gs_debug;
 extern bool traceUsermoduleParameters;
 extern bool parameterCheck;
 extern bool rangeCheck;

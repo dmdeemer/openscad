@@ -1014,6 +1014,7 @@ int main(int argc, char **argv)
     ("x,x", po::value<string>(), "dxf_file deprecated, use -o")
 #ifdef ENABLE_PYTHON
   ("trust-python",  "Trust python")
+  ("gs_debug", po::value<string>(), "Debug Value")
 #endif
   ;
 
@@ -1059,6 +1060,11 @@ int main(int argc, char **argv)
 
   if (vm.count("traceDepth")) {
     OpenSCAD::traceDepth = vm["traceDepth"].as<unsigned int>();
+  }
+  if (vm.count("gs_debug")) {
+	  std::string debug = vm["gs_debug"].as<string>();
+	  sscanf(debug.c_str(),"%d",&OpenSCAD::gs_debug);
+//    OpenSCAD::gs_debug = vm["gs_debug"].as<unsigned int>();
   }
   std::map<std::string, bool *> flags;
   flags.insert(std::make_pair("trace-usermodule-parameters", &OpenSCAD::traceUsermoduleParameters));
