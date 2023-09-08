@@ -53,7 +53,241 @@
 
 
 using namespace libfive;
-#define OPT_META	1
+
+#define BUCKET 8
+
+
+// 3D Map stuff
+//
+class Map3DTree
+{
+	public:
+		Map3DTree(void);
+		int ind[8]; // 8 octants, intially -1
+		Vector3d pts[BUCKET];
+		int ptlen; 
+	// else ptlen=-1-> inds gelten
+	// else pts gelten
+};
+
+class Map3D
+{
+	public:
+		Map3D(Vector3d min, Vector3d max);
+		void add(Vector3d pt);
+		void del(Vector3d pt);
+		int find(Vector3d pt, double r,std::vector<Vector3d> &result,int maxresult);
+		void dump_hier(int ind, int hier,float minx, float miny, float minz, float maxx, float maxy, float maxz);
+		void dump();
+	private:
+		void add_sub(int ind,Vector3d min, Vector3d max, Vector3d pt,int disable_local_num);
+		void find_sub(int ind, double minx, double miny, double minz, double maxx, double maxy, double maxz,Vector3d pt, double r,std::vector<Vector3d> &result,int maxresult);
+		Vector3d min, max;
+		std::vector<Map3DTree> items;
+};
+
+Map3DTree::Map3DTree(void) {
+	for(int i=0;i<8;ind[i++]=-1);
+	ptlen=0;
+}
+
+Map3D::Map3D(Vector3d min, Vector3d max) {
+	this->min=min;
+	this->max=max;
+}
+void Map3D::add_sub(int ind, Vector3d min, Vector3d max,Vector3d pt, int disable_local_num) {
+	int indnew;
+	int corner;
+	Vector3d mid;
+	do {
+		if(items[ind].ptlen >= 0 && disable_local_num != ind) {
+			if(items[ind].ptlen < BUCKET) {
+				for(int i=0;i<items[ind].ptlen;i++)
+					if(items[ind].pts[i] == pt) return;
+				items[ind].pts[items[ind].ptlen++]=pt;
+				return;
+			} else {  
+				printf("auslagern\n");
+				for(int i=0;i<items[ind].ptlen;i++) {
+					add_sub(ind, min, max,items[ind].pts[i],ind);
+				}
+				items[ind].ptlen=-1;
+				// run through
+			} 
+		}
+		mid[0]=(min[0]+max[0])/2.0;
+		mid[1]=(min[1]+max[1])/2.0;
+		mid[2]=(min[2]+max[2])/2.0;
+		corner=(pt[0]>=mid[0]?1:0)+(pt[1]>=mid[1]?2:0)+(pt[2]>=mid[2]?4:0);
+		indnew=items[ind].ind[corner];
+		if(indnew == -1) {
+			indnew=items.size();
+			items.push_back(Map3DTree());
+			items[ind].ind[corner]=indnew;					
+		}
+		if(corner&1) min[0]=mid[0]; else max[0]=mid[0];
+		if(corner&2) min[1]=mid[1]; else max[1]=mid[1];
+		if(corner&4) min[2]=mid[2]; else max[2]=mid[2];
+		ind=indnew;
+	}
+	while(1);
+
+}
+void Map3D::add(Vector3d pt) {
+	if(items.size() == 0) {
+		items.push_back(Map3DTree());
+		items[0].pts[0]=pt;
+		items[0].ptlen++;
+		return;
+	}
+	add_sub(0,this->min, this->max, pt,-1);
+}
+
+void Map3D::del(Vector3d pt) {
+	int ind=0;
+	int corner;
+	Vector3d min=this->min;
+	Vector3d max=this->max;
+	Vector3d mid;
+	printf("Deleting %g/%g/%g\n",pt[0], pt[1], pt[2]);
+	while(ind != -1) {
+		for(int i=0;i<items[ind].ptlen;i++) {
+			if(items[ind].pts[i]==pt) {
+				for(int j=i+1;j<items[ind].ptlen;j++)
+					items[ind].pts[j-1]=items[ind].pts[j];
+				items[ind].ptlen--;
+				return;
+			}
+			// was wenn leer wird dnn sind ind immer noch -1
+		}
+		mid[0]=(min[0]+max[0])/2.0;
+		mid[1]=(min[1]+max[1])/2.0;
+		mid[2]=(min[2]+max[2])/2.0;
+		corner=(pt[0]>mid[0]?1:0)+(pt[1]>mid[1]?2:0)+(pt[2]>mid[2]?4:0);
+		printf("corner=%d\n",corner);
+		ind=items[ind].ind[corner];
+		if(corner&1) min[0]=mid[0]; else max[0]=mid[0];
+		if(corner&2) min[1]=mid[1]; else max[1]=mid[1];
+		if(corner&4) min[2]=mid[2]; else max[2]=mid[2];
+	}
+}
+
+void Map3D::find_sub(int ind, double minx, double miny, double minz, double maxx, double maxy, double maxz, Vector3d pt, double r,std::vector<Vector3d> &result,int maxresult){
+	if(ind == -1) return;
+	if(this->items[ind].ptlen > 0){
+		for(int i=0;i<this->items[ind].ptlen;i++) {
+			if((this->items[ind].pts[i]-pt).norm() < r)
+				result.push_back(this->items[ind].pts[i]);
+			if(result.size() >= maxresult) return;
+		}
+		return;
+	}
+	double midx,midy, midz;
+//	printf("find_sub ind=%d %g/%g/%g - %g/%g/%g\n",ind, minx, miny,  minz, maxx, maxy, maxz );
+	midx=(minx+maxx)/2.0;
+	midy=(miny+maxy)/2.0;
+	midz=(minz+maxz)/2.0;
+	if(result.size() >= maxresult) return;
+	if( pt[2]+r >= minz && pt[0]-r < midz ) {
+		if( pt[1]+r >= miny && pt[0]-r < midy) {
+			if(pt[0]+r >= minx && pt[0]-r < midx ) find_sub(this->items[ind].ind[0],minx, miny, minz, midx, midy, midz,pt,r,result,maxresult);
+			if(pt[0]+r >= midx && pt[0]-r < maxx ) find_sub(this->items[ind].ind[1],midx, miny, minz, maxx, midy, midz,pt,r,result,maxresult);
+		}
+		if( pt[1]+r >= midy && pt[0]-r < maxy) {
+			if(pt[0]+r >= minx && pt[0]-r < midx ) find_sub(this->items[ind].ind[2],minx, midy, minz, midx, maxy, midz,pt,r,result,maxresult);
+			if(pt[0]+r >= midx && pt[0]-r < maxx ) find_sub(this->items[ind].ind[3],midx, midy, minz, maxx, maxy, midz,pt,r,result,maxresult);
+		}
+	}
+	if( pt[2]+r >= midz && pt[0]-r < maxz ) {
+		if( pt[1]+r >= miny && pt[0]-r < midy) {
+			if(pt[0]+r >= minx && pt[0]-r < midx ) find_sub(this->items[ind].ind[4],minx, miny, midz, midx, midy, maxz,pt,r,result,maxresult);
+			if(pt[0]+r >= midx && pt[0]-r < maxx ) find_sub(this->items[ind].ind[5],midx, miny, midz, maxx, midy, maxz,pt,r,result,maxresult);
+		}
+		if( pt[1]+r >= midy && pt[0]-r < maxy) {
+			if(pt[0]+r >= minx && pt[0]-r < midx ) find_sub(this->items[ind].ind[6],minx, midy, midz, midx, maxy, maxz,pt,r,result,maxresult);
+			if(pt[0]+r >= midx && pt[0]-r < maxx ) find_sub(this->items[ind].ind[7],midx, midy, midz, maxx, maxy, maxz,pt,r,result,maxresult);
+		}
+	}
+
+}
+int Map3D::find(Vector3d pt, double r,std::vector<Vector3d> &result, int maxresult){
+	int results=0;
+	if(items.size() == 0) return results;
+	result.clear();
+	find_sub(0,this->min[0], this->min[1], this->min[2], this->max[0], this->max[1], this->max[2], pt,r,result, maxresult);
+	return result.size();
+}
+
+void Map3D::dump_hier(int i, int hier, float minx, float miny, float minz, float maxx, float maxy, float maxz) {
+	for(int i=0;i<hier;i++) printf("  ");
+	printf("%d inds ",i);
+	for(int j=0;j<8;j++) printf("%d ",items[i].ind[j]);
+	printf("pts ");
+	for(int j=0;j<items[i].ptlen;j++) printf("%g/%g/%g ",items[i].pts[j][0],items[i].pts[j][1],items[i].pts[j][2]);
+
+	float midx, midy, midz;
+	midx=(minx+maxx)/2.0;
+	midy=(miny+maxy)/2.0;
+	midz=(minz+maxz)/2.0;
+	printf(" (%g/%g/%g - %g/%g/%g)\n", minx, miny, minz, maxx, maxy, maxz);
+	if(items[i].ind[0] != -1) dump_hier(items[i].ind[0],hier+1,minx,miny, minz, midx, midy, midz);
+	if(items[i].ind[1] != -1) dump_hier(items[i].ind[1],hier+1,midx,miny, minz, maxx, midy, midz);
+	if(items[i].ind[2] != -1) dump_hier(items[i].ind[2],hier+1,minx,midy, minz, midx, maxy, midz);
+	if(items[i].ind[3] != -1) dump_hier(items[i].ind[3],hier+1,midx,midy, minz, maxx, maxy, midz);
+	if(items[i].ind[4] != -1) dump_hier(items[i].ind[4],hier+1,minx,miny, midz, midx, midy, maxz);
+	if(items[i].ind[5] != -1) dump_hier(items[i].ind[5],hier+1,midx,miny, midz, maxx, midy, maxz);
+	if(items[i].ind[6] != -1) dump_hier(items[i].ind[6],hier+1,minx,midy, midz, midx, maxy, maxz);
+	if(items[i].ind[7] != -1) dump_hier(items[i].ind[7],hier+1,midx,midy, midz, maxx, maxy, maxz);
+}
+void Map3D::dump(void) {
+	dump_hier(0,0,min[0],min[1],min[2],max[0], max[1],max[2]);
+}
+
+/*
+int main(void)
+{
+	char *line=NULL;
+	size_t linelen;
+	Vector3d ptmin(-10,-10,-10);
+	Vector3d ptmax(10,10,10);
+	Vector3d pt;
+	std::vector<Vector3d> result;
+	Map3D map(ptmin, ptmax);
+	for(int i=0;i<8;i++)
+	  map.add(Vector3d(1,1,i));
+	map.dump();
+	do
+	{
+		printf("> ");
+		getline(&line, &linelen, stdin);
+		printf("Read: %s\n",line);
+//		
+		
+		if(sscanf(line,"add %lf %lf %lf",&pt[0], &pt[1],&pt[2]) == 3) {
+			map.add(pt);
+			printf("added \n");
+			map.dump();
+		}
+		if(sscanf(line,"del %lf %lf %lf",&pt[0], &pt[1],&pt[2]) == 3) {
+			map.del(pt);
+			printf("deleted \n");
+			map.dump();
+		}
+		if(sscanf(line,"find %lf %lf %lf",&pt[0], &pt[1],&pt[2]) == 3) {
+			result.clear();
+			map.find(pt,0.1,result);
+			printf("found:%ld \n",result.size());
+			for(unsigned int i=0;i<result.size();i++)
+				printf("%g/%g/%g\n",result[i][0],result[i][1],result[i][2]);
+			printf("\n");
+		}
+//		free(line);
+	}while(1);
+
+}
+
+*/
+
 typedef struct
 {
 	Vector3d pos;
@@ -153,12 +387,11 @@ Vector3d SDF_calculateNormComp(libfive::Tree &tr, Vector3d pt, Vector3d diff1)
 }
 
 int SDF_align(libfive::Tree &tr,SDFVertex  &vert,double tol) {
-	printf("align pt :%g/%g/%g norm:%g/%g/%g\n",vert.pos[0],vert.pos[1],vert.pos[2], vert.norm[0],vert.norm[1],vert.norm[2]);
+//	printf("align pt :%g/%g/%g norm:%g/%g/%g\n",vert.pos[0],vert.pos[1],vert.pos[2], vert.norm[0],vert.norm[1],vert.norm[2]);
 	if(vert.norm.norm() < 1e-9){
 		vert.norm=SDF_calculateNormComp(tr,vert.pos,Vector3d(0.01,0,0));
 		vert.norm.normalize();
 	}
-	printf("start loop\n");
 	double sdf = sdf_func(tr,vert.pos);
 	int fails=0;
 	do
@@ -166,13 +399,13 @@ int SDF_align(libfive::Tree &tr,SDFVertex  &vert,double tol) {
 		// now move the pt
 		Vector3d pt_bak=vert.pos;
 		vert.pos -= sdf * vert.norm;
-		printf("pt is %g/%g/%g\n",vert.pos[0],vert.pos[1],vert.pos[2]);
+//		printf("pt is %g/%g/%g\n",vert.pos[0],vert.pos[1],vert.pos[2]);
 		double sdftest = sdf_func(tr,vert.pos);
-		printf("sdftest is %g\n",sdftest);
+//		printf("sdftest is %g\n",sdftest);
 		if(sdftest > 10) exit(1);
 		if(isinf(sdftest)) exit(1);
 		double b=(sdf - sdftest)/sdf;
-		printf("b=%g\n",b);
+//		printf("b=%g\n",b);
 		if(fabs(b) < 0.1) fails++;
 		else if(fabs(sdftest) > fabs(sdf)) fails++;
 		else fails=0;
@@ -187,200 +420,9 @@ int SDF_align(libfive::Tree &tr,SDFVertex  &vert,double tol) {
 			sdf=sdftest;
 //		}
 	} while(fabs(sdf) > tol);
-	printf("align done\n");
 	return 0;
 }
 
-void split_metaloops(libfive::Tree &tr, std::vector<SDFVertex> &vert, std::vector<SDFTriangle> &triangles) {
-	// Now find META looops
-	double sep=0.25; // TODO sep needs  to be bigger than 0.01
-	std::unordered_map<int, SDFTwoInd  > meta_piece;
-	SDFTwoInd piece;
-	int ind1, ind2;
-	// store META loops in hash
-	for(int i=0;i<triangles.size();i++)
-	{
-		for(int j=0;j<3;j++) {
-			ind1=triangles[i].i[j]; // TODO METAS cannot get finished
-			ind2=triangles[i].i[(j+1)%3];
-			if((vert[ind1].opt & OPT_META) && vert[ind2].opt & OPT_META) {
-//				printf("META %d->%d\n",ind1, ind2);
-				if(meta_piece.count(ind1) == 0) {
-					piece.i[0]=ind2;
-					piece.i[1]=-1;
-					meta_piece[ind1]=piece;
-				} else {
-					meta_piece[ind1].i[1]=ind2;
-				}
-			}
-		}
-	}		
-	do
-	{
-		//  build chains
-		//  find next chain ind
-		int  ind=-1;
-		for(auto kv: meta_piece) {
-			if(kv.second.i[0] != -1){  ind=kv.second.i[0]; break; }
-			if(kv.second.i[1] != -1){  ind=kv.second.i[1]; break; }
-		}
-		if(ind == -1) break;
-
-		std::vector<int> chain;
-		int newind;
-		int closed=0;
-		do
-		{
-			if(chain.size() > 0 && ind == chain[0]){
-				closed=1;
-				break;
-			}
-
-
-			chain.push_back(ind);
-			newind=-1;
-			for(int i=0;newind == -1 && i<2;i++)
-			{
-				newind=meta_piece[ind].i[i];
-				if(chain.size() >= 2 && chain[chain.size()-2] ==  newind) newind=-1;
-				if(newind != -1)  {
-					meta_piece[ind].i[i]=-1; 
-				}
-			}
-			if(newind == -1) break;
-			// also disable reverse:
-			if(meta_piece[newind].i[0] == ind) meta_piece[newind].i[0]=-1;
-			if(meta_piece[newind].i[1] == ind) meta_piece[newind].i[1]=-1;
-			ind=newind;
-		} while(1);
-		if(!closed) {
-			continue; // notr usable
-		} 
-
-		printf("Chain is "); 
-		for(int i=0;i<chain.size();i++)
-			printf("%d ",chain[i]);
-		printf("\n");
-		
-		std::vector<int> chain_mirror;
-		std::vector<Vector3d> chain_norm;
-		int n = chain.size();
-		// create norm vectors
-		for(int i=0;i<n;i++) {
-			Vector3d p1, p2, p3, nrm;
-			p1=vert[chain[(i+n-1)%n]].pos;
-			p2=vert[chain[i%n]].pos;
-			p3=vert[chain[(i+n+1)%n]].pos;
-			nrm=(p2-p1).cross(p3-p2);
-			chain_norm.push_back(nrm);
-		}
-		// duplicate points
-		for(int i=0;i<chain.size();i++) {
-			 int pos=i;
-			 Vector3d sepdir;
-			 do {
-				 sepdir=chain_norm[pos%n];
-				 pos++;
-			 }
-			 while(sepdir.norm() < 0.1);
-			 sepdir.normalize();
-			 SDFVertex vert_dup=vert[chain[i]];
-			 chain_mirror.push_back(vert.size());
-			 vert_dup.pos += sepdir * sep;
-			 vert.push_back(vert_dup);
-			 vert[chain[i]].pos -= sepdir * sep; 
-		}
-		// map points
-		//  TODO livbfive equation anzapfgen
-		//  TODO eigener tree ?
-		//  TODO golden ratio
-		//  TODO chains nicht doppeln
-		//  TODO torus probieren
-		SDFTriangle tri;
-		for(int i=0;i<triangles.size();i++)
-		{
-			Vector3d cent(0,0,0);
-			int meta_ind=-1;
-			for(int j=0;j<3;j++) {
-				ind=triangles[i].i[j]; 
-				cent = cent + vert[ind].pos;
-				if((vert[ind].opt & OPT_META)) meta_ind=ind;
-			}
-			cent=cent /3.0;
-			if(meta_ind != -1) {
-				std::vector<int>::iterator it;
-				it=std::find(chain.begin(),chain.end(),meta_ind);
-				if(it != chain.end()) {
-					int pos=it-chain.begin();
-					Vector3d p1,p2,p3,nrm;
-					do
-					{
-						nrm=chain_norm[pos%n];
-						pos++;
-					}
-					while(nrm.norm() < 0.1);
-					nrm.normalize();
-//					printf("n=%g/%g/%g\n",nrm[0],nrm[1],nrm[2]);
-					double dist=(cent-p2).dot(nrm);
-//					printf("dist=%g\n",dist);
-					if(dist > 0) { 
-						for(int j=0;j<3;j++) {
-							ind=triangles[i].i[j]; // TODO METAS cannot get finished
-							it=std::find(chain.begin(),chain.end(),ind);
-							if(it != chain.end()) {
-								int pos=it-chain.begin();
-//								printf("repl pos is %d\n",pos);
-								triangles[i].i[j]=chain_mirror[pos];
-							}
-
-						}
-
-					}
-
-				}
-			
-				// if tri has meta point,calculatenormal  of meta plane
-			}
-		}		
-		// redo norm vector for chain inds
-		//
-		// go through all triangles and calculate their mid point
-		for(int i=0;i<chain.size();i++) {
-			Vector3d diff1(0.01,0,0);
-			double sdf;
-			int ind;
-
-			ind=chain[i];
-			vert[ind].norm =SDF_calculateNormComp(tr,vert[ind].pos, diff1);
-		        sdf 	= sdf_func(tr, vert[ind].pos);
-			vert[ind].pos -= vert[ind].norm*sdf;
-
-			ind=chain_mirror[i];
-			vert[ind].norm =SDF_calculateNormComp(tr,vert[ind].pos, diff1);
-		        sdf 	= sdf_func(tr, vert[ind].pos);
-			vert[ind].pos -= vert[ind].norm*sdf;
-		}
-		// then create filling planes
-		for(int i=0;i<n-2;i++) {
-			tri.i[0]=chain[0]; // TODO better alg 
-			tri.i[1]=chain[i+2];
-			tri.i[2]=chain[i+1];
-			triangles.push_back(tri);
-
-			tri.i[0]=chain_mirror[0]; 
-			tri.i[1]=chain_mirror[i+1];
-			tri.i[2]=chain_mirror[i+2];
-			triangles.push_back(tri);
-		}
-
-		for(int i=0;i<n;i++) // remove the meta opt
-		{
-			vert[chain[i]].opt=0;
-			vert[chain_mirror[i]].opt=0;
-		}
-	}
-	while(1);
-}
 void debug_point(PolySet *p, SDFVertex &vert) 
 {
 	double size=0.3;
@@ -411,191 +453,104 @@ void debug_point(PolySet *p, SDFVertex &vert)
 	tmp=vert.pos+(vert.norm-xdir*0.5-ydir*0.866)*size; p->append_vertex(tmp[0],tmp[1],tmp[2]);
 }
 
+#define myminax(a,b) a<b?a:b
+
 PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 {
-	std::vector<SDFVertex> vert;
 	SDFVertex v;
 	std::vector<SDFTriangle> tris_work;
 	std::vector<SDFTriangle> tris_finished;
 	SDFTriangle tri;
+	int maxresult=10;
 
 	// form cube
 	v.opt = 0;
 	v.norm=Vector3d(0,0,0);
-	v.pos = Vector3d(pmin[0],pmin[1],pmin[2]); vert.push_back(v);
-	v.pos = Vector3d(pmax[0],pmin[1],pmin[2]); vert.push_back(v); 
-	v.pos = Vector3d(pmax[0],pmax[1],pmin[2]); vert.push_back(v); 
-	v.pos = Vector3d(pmin[0],pmax[1],pmin[2]); vert.push_back(v); 
-	v.pos = Vector3d(pmin[0],pmin[1],pmax[2]); vert.push_back(v); 
-	v.pos = Vector3d(pmax[0],pmin[1],pmax[2]); vert.push_back(v); 
-	v.pos = Vector3d(pmax[0],pmax[1],pmax[2]); vert.push_back(v); 
-	v.pos = Vector3d(pmin[0],pmax[1],pmax[2]); vert.push_back(v); 
+	std::vector<SDFVertex> vert_sparse, vert_dense;
+	float vert_thresh;
+	v.pos = Vector3d(pmin[0],pmin[1],pmin[2]); vert_sparse.push_back(v);
+	v.pos = Vector3d(pmax[0],pmin[1],pmin[2]); vert_sparse.push_back(v); 
+	v.pos = Vector3d(pmax[0],pmax[1],pmin[2]); vert_sparse.push_back(v); 
+	v.pos = Vector3d(pmin[0],pmax[1],pmin[2]); vert_sparse.push_back(v); 
+	v.pos = Vector3d(pmin[0],pmin[1],pmax[2]); vert_sparse.push_back(v); 
+	v.pos = Vector3d(pmax[0],pmin[1],pmax[2]); vert_sparse.push_back(v); 
+	v.pos = Vector3d(pmax[0],pmax[1],pmax[2]); vert_sparse.push_back(v); 
+	v.pos = Vector3d(pmin[0],pmax[1],pmax[2]); vert_sparse.push_back(v); 
 
-	tri.i[0]=1; tri.i[1]=5; tri.i[2]=0; tris_work.push_back(tri);
-	tri.i[0]=0; tri.i[1]=5; tri.i[2]=4; tris_work.push_back(tri);
-
-	tri.i[0]=2; tri.i[1]=5; tri.i[2]=1; tris_work.push_back(tri);
-	tri.i[0]=6; tri.i[1]=5; tri.i[2]=2; tris_work.push_back(tri);
-
-	tri.i[0]=4; tri.i[1]=5; tri.i[2]=7; tris_work.push_back(tri);
-	tri.i[0]=7; tri.i[1]=5; tri.i[2]=6; tris_work.push_back(tri);
-
-	tri.i[0]=0; tri.i[1]=3; tri.i[2]=1; tris_work.push_back(tri);
-	tri.i[0]=1; tri.i[1]=3; tri.i[2]=2; tris_work.push_back(tri);
-
-	tri.i[0]=4; tri.i[1]=3; tri.i[2]=0; tris_work.push_back(tri);
-	tri.i[0]=7; tri.i[1]=3; tri.i[2]=4; tris_work.push_back(tri);
-
-	tri.i[0]=2; tri.i[1]=3; tri.i[2]=6; tris_work.push_back(tri);
-	tri.i[0]=6; tri.i[1]=3; tri.i[2]=7; tris_work.push_back(tri);
-
-	// hier SDF
+	Map3D map3d(pmin, pmax);
 	// alle vertices anpassen
 	int count=0;
-	for(int i=0;i<vert.size();i++) {
-		SDF_align(tr,vert[i] ,tol);
+	for(int i=0;i<vert_sparse.size();i++) {
+		SDF_align(tr,vert_sparse[i] ,tol);
+		map3d.add(vert_sparse[i].pos);
 	}
-	printf("start normal splitting\n");
-	int round=0; // TODO weg
-	while(round <= OpenSCAD::gs_debug ) 
-	{
-		std::vector<SDFTriangle> tris_new;
-		std::unordered_map<SDFTwoInd, int,boost::hash<SDFTwoInd> > edges;
-		printf("Round %d tris_work is %d\n",round,tris_work.size());
-		int ind1,ind2;
-		Vector3d p1, p2;
+	map3d.dump();
+	// dense grids have at least 5 neightbor points
+	// setting it to half  makes  1st iteration reasonable
+	vert_thresh=myminax(myminax(pmax[0]-pmin[0],pmax[1]-pmin[1]),pmax[2]-pmin[2])/2.0;
+	std::vector<Vector3d> result;
 
-		double maxdist=0.0; // find out maximal distance
-		for(int i=0;i<tris_work.size();i++) {
-			double dist;
-			for(int j=0;j<3;j++) {
-				ind1=tri.i[j];
-				ind2=tri.i[(j+1)%3];
-				p1=vert[ind1].pos;
-				p2=vert[ind2].pos;
-				dist=(p2-p1).norm();
-				if(maxdist == 0 || dist > maxdist) maxdist=dist;
-			}
-		}
-		printf("max dist is %g\n",maxdist);
-		// jede kante  preufen und  schauen ob sie gesplittetwerden muss, dann neuen index ausrechnen
-		for(int i=0;i<tris_work.size();i++) {
-			tri=tris_work[i];
-			SDFVertex pmid;
-			pmid.opt=0;
-			double dist;
-			SDFTwoInd e;
-			for(int j=0;j<3;j++) {
-				ind1=tri.i[j];
-				ind2=tri.i[(j+1)%3];
-				e.i[0]=ind1<ind2?ind1:ind2;
-				e.i[1]=ind1>ind2?ind1:ind2;
-				if(edges.count(e) == 0) {
-					p1=vert[ind1].pos;
-					p2=vert[ind2].pos;
-					dist=(p2-p1).norm();
-					gboolean split=true;
-					if(dist < maxdist/sqrt(2)) split=false;
-					if(dist < tol) split=false;
-				        if(count >1000 ) split=false;
-					if(vert[ind1].opt & OPT_META) split=false;
-					if(vert[ind2].opt & OPT_META) split=false;
-					if(split){
-						printf("Split %d/%d\n",i,j);
-						// TODO nach und nach 1/2, 1/3, 2/3 probieren
-						int mode;
-						double ratio=1.0;
-						for( mode=0;mode<3;mode++)
-						{
-							printf("mode=%d\n",mode);
-							switch(mode)
-							{
-								case 0: ratio=1.0/2.0; break;
-								case 1: ratio=1.0/3.0; break;
-								case 2: ratio=2.0/3.0; break;
-							}
-							pmid.pos=p1*ratio+p2*(1-ratio);
-							pmid.opt=0;
-							printf("norm from %g/%g/%g and %g/%g/%g\n",vert[ind1].norm[0],vert[ind1].norm[1],vert[ind1].norm[2],vert[ind2].norm[0],vert[ind2].norm[1],vert[ind2].norm[2]);
-							pmid.norm =vert[ind1].norm*ratio+vert[ind2].norm*(1-ratio);
-							pmid.norm.normalize();
-							printf("start align\n");
-							if(!SDF_align(tr,pmid,tol)){
-							       	break;
-								printf("Success break\n");
-							}
-							printf("end align\n");
-						}
-						if(mode == 3) {
-							pmid.pos=p1*ratio+p2*(1-ratio);
-							pmid.opt=OPT_META;
-						}
-						
-						edges[e]=vert.size(); // new index
-						vert.push_back(pmid);
-
+	// TODO vertices iterativ verdichten
+	// find sparse points and duplicate them
+	int round=0;
+	while(1) {
+		printf("new round\n");
+		std::vector<SDFVertex> vert_sparse_extra;
+		for(int i=0;i<vert_sparse.size();i++) {
+			map3d.find(vert_sparse[i].pos, vert_thresh, result,maxresult);
+			if(result.size() == maxresult); // TODO was jetzt ?
+			printf("%d: %d results\n",i,result.size());
+			if(result.size() <  5) {
+				printf("this needs treatment\n");
+				for(int j=0;j<result.size();j++) {
+					if(result[j] != vert_sparse[i].pos) {
+						SDFVertex  midpt;
+						midpt.pos=(result[j]+vert_sparse[i].pos)/2.0;
+						midpt.norm=vert_sparse[i].norm;
+						SDF_align(tr,vert_sparse[i] ,tol);
+						vert_sparse_extra.push_back(midpt);
+						map3d.add(midpt.pos);
 					}
-					count++;
-
 				}
+				auto p = new PolySet(3, true);
+				return p;
 			}
 		}
-		// dann jedes dreick tatsaechlich splitten
-		for(int i=0;i<tris_work.size();i++) {
-			tri=tris_work[i];
-			int si[3];
-			int ind1, ind2;
-			SDFTwoInd e;
-			for(int j=0;j<3;j++) {
-				ind1=tri.i[j];
-				ind2=tri.i[(j+1)%3];
-				e.i[0]=ind1<ind2?ind1:ind2;
-				e.i[1]=ind1>ind2?ind1:ind2;
-				if(edges.count(e) == 0) si[j]=-1;
-				else si[j]=edges[e];
+		// now sort the good ones
+		{
+			std::vector<SDFVertex> vert_sparse_new;
+			for(int i=0;i<vert_sparse.size();i++) {
+				map3d.find(vert_sparse[i].pos, vert_thresh, result,maxresult);
+				if(result.size() >= 5) vert_dense.push_back(vert_sparse[i]);
+				else vert_sparse_new.push_back(vert_sparse[i]);
 			}
-			SDFTriangle tri_new; 
-			if(si[2] == -1 && si[1] == -1 && si[0] == -1) {
-				tris_new.push_back(tri);
-
-			} else if(si[2] == -1 && si[1] == -1 && si[0] != -1) {
-				tri_new.i[0]=tri.i[0]; tri_new.i[1]=si[0]; tri_new.i[2]=tri.i[2]; tris_new.push_back(tri_new);
-				tri_new.i[0]=tri.i[2]; tri_new.i[1]=si[0]; tri_new.i[2]=tri.i[1]; tris_new.push_back(tri_new);
-			} else if(si[2] == -1 && si[1] != -1 && si[0] == -1) {
-				tri_new.i[0]=tri.i[1]; tri_new.i[1]=si[1]; tri_new.i[2]=tri.i[0]; tris_new.push_back(tri_new);
-				tri_new.i[0]=tri.i[0]; tri_new.i[1]=si[1]; tri_new.i[2]=tri.i[2]; tris_new.push_back(tri_new);
-			} else if(si[2] != -1 && si[1] == -1 && si[0] == -1) {
-				tri_new.i[0]=tri.i[2]; tri_new.i[1]=si[2]; tri_new.i[2]=tri.i[1]; tris_new.push_back(tri_new);
-				tri_new.i[0]=tri.i[1]; tri_new.i[1]=si[2]; tri_new.i[2]=tri.i[0]; tris_new.push_back(tri_new);
-			
-			} else if(si[2] == -1 && si[1] != -1 && si[0] != -1) {
-				tri_new.i[0]=tri.i[0]; tri_new.i[1]=   si[0]; tri_new.i[2]=tri.i[2]; tris_new.push_back(tri_new);
-				tri_new.i[0]=tri.i[2]; tri_new.i[1]=   si[0]; tri_new.i[2]=   si[1]; tris_new.push_back(tri_new);
-				tri_new.i[0]=   si[0]; tri_new.i[1]=tri.i[1]; tri_new.i[2]=   si[1]; tris_new.push_back(tri_new);
-			} else if(si[2] != -1 && si[1] != -1 && si[0] == -1) {
-				tri_new.i[0]=tri.i[1]; tri_new.i[1]=   si[1]; tri_new.i[2]=tri.i[0]; tris_new.push_back(tri_new);
-				tri_new.i[0]=tri.i[0]; tri_new.i[1]=   si[1]; tri_new.i[2]=   si[2]; tris_new.push_back(tri_new);
-				tri_new.i[0]=   si[1]; tri_new.i[1]=tri.i[2]; tri_new.i[2]=   si[2]; tris_new.push_back(tri_new);
-			} else if(si[2] != -1 && si[1] == -1 && si[0] != -1) {
-				tri_new.i[0]=tri.i[2]; tri_new.i[1]=   si[2]; tri_new.i[2]=tri.i[1]; tris_new.push_back(tri_new);
-				tri_new.i[0]=tri.i[1]; tri_new.i[1]=   si[2]; tri_new.i[2]=   si[0]; tris_new.push_back(tri_new);
-				tri_new.i[0]=   si[2]; tri_new.i[1]=tri.i[0]; tri_new.i[2]=   si[0]; tris_new.push_back(tri_new);
-			} else if(si[2] != -1 && si[1] != -1 && si[0] != -1) {
-				tri_new.i[0]=tri.i[0]; tri_new.i[1]=si[0]; tri_new.i[2]=si[2]; tris_new.push_back(tri_new);
-				tri_new.i[0]=tri.i[1]; tri_new.i[1]=si[1]; tri_new.i[2]=si[0]; tris_new.push_back(tri_new);
-				tri_new.i[0]=tri.i[2]; tri_new.i[1]=si[2]; tri_new.i[2]=si[1]; tris_new.push_back(tri_new);
-				tri_new.i[0]=si[0]; tri_new.i[1]=si[1]; tri_new.i[2]=si[2]; tris_new.push_back(tri_new);
-			} else {
-				printf("dont  know how to split triangle\n");
-				exit(1);
-			}
-	
+			vert_sparse = vert_sparse_new;
 		}
-		split_metaloops(tr,vert, tris_new);
-		tris_work = tris_new;
+		printf("sparse: %d dense %d\n",vert_sparse.size(), vert_dense.size());
+		if(vert_sparse.size() == 0) {
+			vert_sparse=vert_dense;
+			vert_dense.clear();
+			vert_thresh/= 2.0;
+			printf("new thresh %g\n",vert_thresh);
+		}
 		round++;
+		if(round >= 2) break;
 	}
+
+	// identify specified dense points
+	// iterate
+	
+	vert_dense = vert_sparse;
+	
+	// TODO polygone formen
+
 	auto p = new PolySet(3, true);
+	for(int i=0;i<vert_dense.size();i++) {
+		printf("%g/%g/%g\n",vert_dense[i].pos[0],vert_dense[i].pos[1], vert_dense[i].pos[2]);
+		debug_point(p,vert_dense[i]);
+	}
+
+/*	
 	tris_finished = tris_work;
 	printf("%d Points and %d Triangles generated\n",vert.size(),tris_finished.size());
 	for(int i=0;i<tris_finished.size();i++) {
@@ -605,12 +560,7 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 			p->append_vertex(vert[ind].pos[0],vert[ind].pos[1],vert[ind].pos[2]);
 		}
 	}
-	// now mark the META edges
-	for(int i=0;i<vert.size();i++) {
-		if(vert[i].opt & OPT_META) {
-			debug_point(p, vert[i]);
-		}
-	}
+*/	
 	return p;
 }
 #define MY_SDF 
