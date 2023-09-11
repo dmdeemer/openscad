@@ -106,14 +106,6 @@ std::string commandline_commands;
 static bool arg_info = false;
 static std::string arg_colorscheme;
 
-
-bool  is_cmdline_mode(int hidden) {
-	static bool cmdline=false;
-	if(hidden == 1) cmdline=true;
-	if(hidden == 0) cmdline=false;
-	return cmdline;
-}
-
 class Echostream
 {
 public:
@@ -598,7 +590,7 @@ int do_export(const CommandLine& cmd, const RenderVariables& render_variables, F
     if (curFormat == FileFormat::ASCIISTL ||
         curFormat == FileFormat::STL ||
         curFormat == FileFormat::OBJ ||
-        curFormat == FileFormat::OFF_FMT ||
+        curFormat == FileFormat::OFF ||
         curFormat == FileFormat::WRL ||
         curFormat == FileFormat::AMF ||
         curFormat == FileFormat::_3MF ||
@@ -1207,8 +1199,6 @@ int main(int argc, char **argv)
     cmdlinemode = true;
     if (!inputFiles.size()) help(argv[0], desc, true);
   }
-
-  is_cmdline_mode(cmdlinemode?1:0);
 
   if (arg_info || cmdlinemode) {
     if (inputFiles.size() > 1) help(argv[0], desc, true);
