@@ -107,7 +107,6 @@ void Map3D::add_sub(int ind, Vector3d min, Vector3d max,Vector3d pt, int disable
 				items[ind].pts[items[ind].ptlen++]=pt;
 				return;
 			} else {  
-				printf("auslagern\n");
 				for(int i=0;i<items[ind].ptlen;i++) {
 					add_sub(ind, min, max,items[ind].pts[i],ind);
 				}
@@ -493,8 +492,8 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 	// TODO vertices iterativ verdichten
 	// find sparse points and duplicate them
 	int round=0;
-	while(1) {
-		printf("new round\n");
+	while(round < 3) {
+		printf("new round %d\n",round);
 		std::vector<SDFVertex> vert_sparse_extra;
 		for(int i=0;i<vert_sparse.size();i++) {
 			map3d.find(vert_sparse[i].pos, vert_thresh, result,maxresult);
@@ -510,10 +509,9 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 						SDF_align(tr,vert_sparse[i] ,tol);
 						vert_sparse_extra.push_back(midpt);
 						map3d.add(midpt.pos);
+						vert_sparse.push_back(midpt);
 					}
 				}
-				auto p = new PolySet(3, true);
-				return p;
 			}
 		}
 		// now sort the good ones
@@ -534,8 +532,8 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 			printf("new thresh %g\n",vert_thresh);
 		}
 		round++;
-		if(round >= 2) break;
 	}
+	map3d.dump();
 
 	// identify specified dense points
 	// iterate
