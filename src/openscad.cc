@@ -89,7 +89,9 @@
 
 #ifdef ENABLE_PYTHON
 extern std::shared_ptr<AbstractNode> python_result_node;
-std::string evaluatePython(const std::string &code, double time);
+void initPython(void);
+void finishPython(void);
+std::string evaluatePython(const std::string &code, double timem,AssignmentList &assignments);
 extern bool python_active;
 extern bool python_trusted;
 #endif
@@ -406,9 +408,12 @@ int cmdline(const CommandLine& cmd)
 
   if(python_active) {
     auto fulltext_py = text;
-    auto error  = evaluatePython(fulltext_py, 0.0);
+    AssignmentList dummy_assignments;
+    initPython();
+    auto error  = evaluatePython(fulltext_py, 0.0, dummy_assignments);
     if(error.size() > 0) LOG(error.c_str());
     text ="\n";
+    finishPython();
   }
 #endif	  
   text += "\n\x03\n" + commandline_commands;
@@ -424,7 +429,7 @@ int cmdline(const CommandLine& cmd)
   }
 
   // add parameter to AST
-  CommentParser::collectParameters(text.c_str(), root_file);
+  CommentParser::collectParameters(text.c_str(), root_file, '/');
   if (!cmd.parameterFile.empty() && !cmd.setName.empty()) {
     ParameterObjects parameters = ParameterObjects::fromSourceFile(root_file);
     ParameterSets sets;

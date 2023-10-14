@@ -29,6 +29,8 @@ extern bool python_active;
 extern std::string trusted_edit_document_name;
 extern std::string untrusted_edit_document_name;
 bool trust_python_file(const std::string &file, const std::string &content);
+extern PyObject *pythonMainModule;
+extern PyObject *pythonInitDict;
 
 PyObject *PyOpenSCADObjectFromNode(PyTypeObject *type, std::shared_ptr<AbstractNode> node);
 std::shared_ptr<AbstractNode> PyOpenSCADObjectToNode(PyObject *object);
@@ -36,9 +38,9 @@ std::shared_ptr<AbstractNode> PyOpenSCADObjectToNodeMulti(PyObject *object);
 int python_more_obj(std::vector<std::shared_ptr<AbstractNode>>& children, PyObject *more_obj);
 Outline2d python_getprofile(PyObject *cbfunc, double arg);
 double python_doublefunc(PyObject *cbfunc, double arg);
-std::shared_ptr<AbstractNode> python_modulefunc(const ModuleInstantiation *module);
+std::shared_ptr<AbstractNode> python_modulefunc(const ModuleInstantiation *module,const std::shared_ptr<const Context> &context, int *modulefound);
 
-Value python_functionfunc(const FunctionCall *call);
+Value python_functionfunc(const FunctionCall *call,const std::shared_ptr<const Context> &context);
 int python_vectorval(PyObject *vec, double *x, double *y, double *z, double *w=NULL);
 int python_numberval(PyObject *number, double *result);
 void get_fnas(double& fn, double& fa, double& fs);
@@ -50,5 +52,7 @@ extern PyMappingMethods PyOpenSCADMapping;
 extern PyMethodDef PyOpenSCADFunctions[];
 extern PyMethodDef PyOpenSCADMethods[];
 
-std::string evaluatePython(const std::string &code, double time);
+void initPython(void);
+void finishPython(void);
+std::string evaluatePython(const std::string &code, double time,AssignmentList &assignments);
 

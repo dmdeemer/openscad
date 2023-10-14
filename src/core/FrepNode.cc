@@ -37,6 +37,7 @@
 #include "io/fileutils.h"
 #include "Builtins.h"
 #include "handle_dep.h"
+#include "degree_trig.h"
 
 
 
@@ -65,6 +66,7 @@ class Map3DTree
 		Map3DTree(void);
 		int ind[8]; // 8 octants, intially -1
 		Vector3d pts[BUCKET];
+		int ptsind[BUCKET];
 		int ptlen; 
 	// else ptlen=-1-> inds gelten
 	// else pts gelten
@@ -74,14 +76,14 @@ class Map3D
 {
 	public:
 		Map3D(Vector3d min, Vector3d max);
-		void add(Vector3d pt);
+		void add(Vector3d pt, int ind);
 		void del(Vector3d pt);
-		int find(Vector3d pt, double r,std::vector<Vector3d> &result,int maxresult);
+		int find(Vector3d pt, double r,std::vector<Vector3d> &result,std::vector<int> &resultind,int maxresult);
 		void dump_hier(int ind, int hier,float minx, float miny, float minz, float maxx, float maxy, float maxz);
 		void dump();
 	private:
-		void add_sub(int ind,Vector3d min, Vector3d max, Vector3d pt,int disable_local_num);
-		void find_sub(int ind, double minx, double miny, double minz, double maxx, double maxy, double maxz,Vector3d pt, double r,std::vector<Vector3d> &result,int maxresult);
+		void add_sub(int ind,Vector3d min, Vector3d max, Vector3d pt,int ptind, int disable_local_num);
+		void find_sub(int ind, double minx, double miny, double minz, double maxx, double maxy, double maxz,Vector3d pt, double r,std::vector<Vector3d> &result,std::vector<int> &resultind,int maxresult);
 		Vector3d min, max;
 		std::vector<Map3DTree> items;
 };
@@ -95,7 +97,7 @@ Map3D::Map3D(Vector3d min, Vector3d max) {
 	this->min=min;
 	this->max=max;
 }
-void Map3D::add_sub(int ind, Vector3d min, Vector3d max,Vector3d pt, int disable_local_num) {
+void Map3D::add_sub(int ind, Vector3d min, Vector3d max,Vector3d pt, int ptind, int disable_local_num) {
 	int indnew;
 	int corner;
 	Vector3d mid;
@@ -104,11 +106,13 @@ void Map3D::add_sub(int ind, Vector3d min, Vector3d max,Vector3d pt, int disable
 			if(items[ind].ptlen < BUCKET) {
 				for(int i=0;i<items[ind].ptlen;i++)
 					if(items[ind].pts[i] == pt) return;
-				items[ind].pts[items[ind].ptlen++]=pt;
+				items[ind].pts[items[ind].ptlen]=pt;
+				items[ind].ptsind[items[ind].ptlen]=ptind;
+				items[ind].ptlen++;
 				return;
 			} else {  
 				for(int i=0;i<items[ind].ptlen;i++) {
-					add_sub(ind, min, max,items[ind].pts[i],ind);
+					add_sub(ind, min, max,items[ind].pts[i],ptind,ind);
 				}
 				items[ind].ptlen=-1;
 				// run through
@@ -132,14 +136,15 @@ void Map3D::add_sub(int ind, Vector3d min, Vector3d max,Vector3d pt, int disable
 	while(1);
 
 }
-void Map3D::add(Vector3d pt) {
+void Map3D::add(Vector3d pt, int ind) { 
 	if(items.size() == 0) {
 		items.push_back(Map3DTree());
 		items[0].pts[0]=pt;
+		items[0].ptsind[0]=ind;
 		items[0].ptlen++;
 		return;
 	}
-	add_sub(0,this->min, this->max, pt,-1);
+	add_sub(0,this->min, this->max, pt,ind,-1);
 }
 
 void Map3D::del(Vector3d pt) {
@@ -171,12 +176,14 @@ void Map3D::del(Vector3d pt) {
 	}
 }
 
-void Map3D::find_sub(int ind, double minx, double miny, double minz, double maxx, double maxy, double maxz, Vector3d pt, double r,std::vector<Vector3d> &result,int maxresult){
+void Map3D::find_sub(int ind, double minx, double miny, double minz, double maxx, double maxy, double maxz, Vector3d pt, double r,std::vector<Vector3d> &result,std::vector<int> &resultind, int maxresult){
 	if(ind == -1) return;
 	if(this->items[ind].ptlen > 0){
 		for(int i=0;i<this->items[ind].ptlen;i++) {
-			if((this->items[ind].pts[i]-pt).norm() < r)
+			if((this->items[ind].pts[i]-pt).norm() < r) {
 				result.push_back(this->items[ind].pts[i]);
+				resultind.push_back(this->items[ind].ptsind[i]);
+			}
 			if(result.size() >= maxresult) return;
 		}
 		return;
@@ -189,31 +196,32 @@ void Map3D::find_sub(int ind, double minx, double miny, double minz, double maxx
 	if(result.size() >= maxresult) return;
 	if( pt[2]+r >= minz && pt[0]-r < midz ) {
 		if( pt[1]+r >= miny && pt[0]-r < midy) {
-			if(pt[0]+r >= minx && pt[0]-r < midx ) find_sub(this->items[ind].ind[0],minx, miny, minz, midx, midy, midz,pt,r,result,maxresult);
-			if(pt[0]+r >= midx && pt[0]-r < maxx ) find_sub(this->items[ind].ind[1],midx, miny, minz, maxx, midy, midz,pt,r,result,maxresult);
+			if(pt[0]+r >= minx && pt[0]-r < midx ) find_sub(this->items[ind].ind[0],minx, miny, minz, midx, midy, midz,pt,r,result,resultind, maxresult);
+			if(pt[0]+r >= midx && pt[0]-r < maxx ) find_sub(this->items[ind].ind[1],midx, miny, minz, maxx, midy, midz,pt,r,result,resultind, maxresult);
 		}
 		if( pt[1]+r >= midy && pt[0]-r < maxy) {
-			if(pt[0]+r >= minx && pt[0]-r < midx ) find_sub(this->items[ind].ind[2],minx, midy, minz, midx, maxy, midz,pt,r,result,maxresult);
-			if(pt[0]+r >= midx && pt[0]-r < maxx ) find_sub(this->items[ind].ind[3],midx, midy, minz, maxx, maxy, midz,pt,r,result,maxresult);
+			if(pt[0]+r >= minx && pt[0]-r < midx ) find_sub(this->items[ind].ind[2],minx, midy, minz, midx, maxy, midz,pt,r,result,resultind, maxresult);
+			if(pt[0]+r >= midx && pt[0]-r < maxx ) find_sub(this->items[ind].ind[3],midx, midy, minz, maxx, maxy, midz,pt,r,result,resultind, maxresult);
 		}
 	}
 	if( pt[2]+r >= midz && pt[0]-r < maxz ) {
 		if( pt[1]+r >= miny && pt[0]-r < midy) {
-			if(pt[0]+r >= minx && pt[0]-r < midx ) find_sub(this->items[ind].ind[4],minx, miny, midz, midx, midy, maxz,pt,r,result,maxresult);
-			if(pt[0]+r >= midx && pt[0]-r < maxx ) find_sub(this->items[ind].ind[5],midx, miny, midz, maxx, midy, maxz,pt,r,result,maxresult);
+			if(pt[0]+r >= minx && pt[0]-r < midx ) find_sub(this->items[ind].ind[4],minx, miny, midz, midx, midy, maxz,pt,r,result,resultind, maxresult);
+			if(pt[0]+r >= midx && pt[0]-r < maxx ) find_sub(this->items[ind].ind[5],midx, miny, midz, maxx, midy, maxz,pt,r,result,resultind, maxresult);
 		}
 		if( pt[1]+r >= midy && pt[0]-r < maxy) {
-			if(pt[0]+r >= minx && pt[0]-r < midx ) find_sub(this->items[ind].ind[6],minx, midy, midz, midx, maxy, maxz,pt,r,result,maxresult);
-			if(pt[0]+r >= midx && pt[0]-r < maxx ) find_sub(this->items[ind].ind[7],midx, midy, midz, maxx, maxy, maxz,pt,r,result,maxresult);
+			if(pt[0]+r >= minx && pt[0]-r < midx ) find_sub(this->items[ind].ind[6],minx, midy, midz, midx, maxy, maxz,pt,r,result,resultind, maxresult);
+			if(pt[0]+r >= midx && pt[0]-r < maxx ) find_sub(this->items[ind].ind[7],midx, midy, midz, maxx, maxy, maxz,pt,r,result,resultind, maxresult);
 		}
 	}
 
 }
-int Map3D::find(Vector3d pt, double r,std::vector<Vector3d> &result, int maxresult){
+int Map3D::find(Vector3d pt, double r,std::vector<Vector3d> &result, std::vector<int> &resultind, int maxresult){
 	int results=0;
 	if(items.size() == 0) return results;
 	result.clear();
-	find_sub(0,this->min[0], this->min[1], this->min[2], this->max[0], this->max[1], this->max[2], pt,r,result, maxresult);
+	resultind.clear();
+	find_sub(0,this->min[0], this->min[1], this->min[2], this->max[0], this->max[1], this->max[2], pt,r,result, resultind, maxresult);
 	return result.size();
 }
 
@@ -291,29 +299,19 @@ typedef struct
 {
 	Vector3d pos;
 	Vector3d norm;
-	int opt;
 } SDFVertex;
+
+typedef struct 
+{
+	double ang;
+	int ptind;
+} SDFCorner ;
 
 typedef struct 
 {
 	int i[3];
 } SDFTriangle ;
 
-typedef struct {
-	int i[2];
-}  SDFTwoInd;
-
-unsigned int hash_value(const SDFTwoInd& r) {
-        unsigned int i;
-        i=r.i[0] |(r.i[1]<<16);
-        return i;
-}
-
-int operator==(const SDFTwoInd &e1, const SDFTwoInd &e2) 
-{
-        if(e1.i[0] == e2.i[0] && e1.i[1] == e2.i[1]) return 1;
-        return 0;
-}
 
 double sdf_sphere(Vector3d  pt, double r)
 {
@@ -456,109 +454,146 @@ void debug_point(PolySet *p, SDFVertex &vert)
 
 PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 {
+	Vector3d xdir(1,0,0),ydir(0,1,0),zdir(0,0,1);
+	double res=0.1; // TODO fix
 	SDFVertex v;
-	std::vector<SDFTriangle> tris_work;
-	std::vector<SDFTriangle> tris_finished;
+	std::vector<SDFTriangle> tris;
 	SDFTriangle tri;
-	int maxresult=10;
+	printf("own procedure\n");
+	std::vector<SDFVertex> pts;
+	std::vector<int> perimeter_inds;
+	Vector3d pmid; // Calculate mid
+	pmid[0]=(pmin[0]+pmax[0])/2.0;
+	pmid[1]=(pmin[0]+pmax[1])/2.0;
+	pmid[2]=(pmin[0]+pmax[2])/2.0;
 
-	// form cube
-	v.opt = 0;
+	Map3D map3d(pmin, pmax); // Create initial point and assign at as single perimeter point
 	v.norm=Vector3d(0,0,0);
-	std::vector<SDFVertex> vert_sparse, vert_dense;
-	float vert_thresh;
-	v.pos = Vector3d(pmin[0],pmin[1],pmin[2]); vert_sparse.push_back(v);
-	v.pos = Vector3d(pmax[0],pmin[1],pmin[2]); vert_sparse.push_back(v); 
-	v.pos = Vector3d(pmax[0],pmax[1],pmin[2]); vert_sparse.push_back(v); 
-	v.pos = Vector3d(pmin[0],pmax[1],pmin[2]); vert_sparse.push_back(v); 
-	v.pos = Vector3d(pmin[0],pmin[1],pmax[2]); vert_sparse.push_back(v); 
-	v.pos = Vector3d(pmax[0],pmin[1],pmax[2]); vert_sparse.push_back(v); 
-	v.pos = Vector3d(pmax[0],pmax[1],pmax[2]); vert_sparse.push_back(v); 
-	v.pos = Vector3d(pmin[0],pmax[1],pmax[2]); vert_sparse.push_back(v); 
+	v.pos[0]=pmin[0];  // TODO merhere optionen wenn SDF_align schiegf geht
+	v.pos[1]=pmid[0];
+	v.pos[2]=pmid[0];
+	SDF_align(tr,v ,tol);
+	printf("init pos is %g/%g/%g\n",v.pos[0],v.pos[1],v.pos[2]);
 
-	Map3D map3d(pmin, pmax);
-	// alle vertices anpassen
-	int count=0;
-	for(int i=0;i<vert_sparse.size();i++) {
-		SDF_align(tr,vert_sparse[i] ,tol);
-		map3d.add(vert_sparse[i].pos);
-	}
-	map3d.dump();
-	// dense grids have at least 5 neightbor points
-	// setting it to half  makes  1st iteration reasonable
-	vert_thresh=myminax(myminax(pmax[0]-pmin[0],pmax[1]-pmin[1]),pmax[2]-pmin[2])/2.0;
-	std::vector<Vector3d> result;
+	map3d.add(v.pos,pts.size());
+	perimeter_inds.push_back(pts.size());
+	pts.push_back(v);
 
-	// TODO vertices iterativ verdichten
-	// find sparse points and duplicate them
-	int round=0;
-	while(round < 3) {
-		printf("new round %d\n",round);
-		std::vector<SDFVertex> vert_sparse_extra;
-		for(int i=0;i<vert_sparse.size();i++) {
-			map3d.find(vert_sparse[i].pos, vert_thresh, result,maxresult);
-			if(result.size() == maxresult); // TODO was jetzt ?
-			printf("%d: %d results\n",i,result.size());
-			if(result.size() <  5) {
-				printf("this needs treatment\n");
-				for(int j=0;j<result.size();j++) {
-					if(result[j] != vert_sparse[i].pos) {
-						SDFVertex  midpt;
-						midpt.pos=(result[j]+vert_sparse[i].pos)/2.0;
-						midpt.norm=vert_sparse[i].norm;
-						SDF_align(tr,vert_sparse[i] ,tol);
-						vert_sparse_extra.push_back(midpt);
-						map3d.add(midpt.pos);
-						vert_sparse.push_back(midpt);
-					}
-				}
-			}
-		}
-		// now sort the good ones
+	while(perimeter_inds.size() > 0) // continue until perimeter is not closed
+	{
+		int baseptind=perimeter_inds[perimeter_inds.size()-1]; // take one perimeter index
+		printf("Progressing %d\n",baseptind);
+
+		// find adjacent points
+		std::vector<Vector3d> result;
+		std::vector<int> resultind;
+		SDFVertex basept=pts[baseptind];
+		map3d.find(basept.pos,res*1.5,result,resultind, 10);
+
+		// filter center point
+		std::vector<SDFCorner> corners; 
+		SDFCorner corner;
+		for(int i=0;i<result.size();i++)
 		{
-			std::vector<SDFVertex> vert_sparse_new;
-			for(int i=0;i<vert_sparse.size();i++) {
-				map3d.find(vert_sparse[i].pos, vert_thresh, result,maxresult);
-				if(result.size() >= 5) vert_dense.push_back(vert_sparse[i]);
-				else vert_sparse_new.push_back(vert_sparse[i]);
+			if(result[i] == basept.pos){
+			       	result.erase(result.begin() + i);
+				continue;
+			} else {
+				corner.ptind=resultind[i];
+				corners.push_back(corner);
 			}
-			vert_sparse = vert_sparse_new;
 		}
-		printf("sparse: %d dense %d\n",vert_sparse.size(), vert_dense.size());
-		if(vert_sparse.size() == 0) {
-			vert_sparse=vert_dense;
-			vert_dense.clear();
-			vert_thresh/= 2.0;
-			printf("new thresh %g\n",vert_thresh);
+		printf("%d points found\n",corners.size());
+
+		// special case: no points
+		if(corners.size() == 0) {
+			printf("No neighbor points\n");
+			// no neighboring points, create 1st one
+			Vector3d newdir;
+			newdir=basept.norm.cross(xdir); 
+			if(newdir.norm() < 1e-6) newdir=basept.norm.cross(ydir); 
+			if(newdir.norm() < 1e-6) newdir=basept.norm.cross(zdir); 
+			newdir.normalize();
+			printf("newdir is %g/%g/%g\n",newdir[0],newdir[1],newdir[2]);
+			SDFVertex newpt;
+			newpt.pos=basept.pos+newdir*res;
+			newpt.norm=basept.norm;
+			SDF_align(tr,newpt ,tol);
+			printf("newpos is  %g/%g/%g\n",newpt.pos[0],newpt.pos[1],newpt.pos[2]);
+
+			corner.ptind = pts.size();
+			map3d.add(newpt.pos,pts.size());
+			pts.push_back(newpt);
+
+
+			corners.push_back(corner);
 		}
-		round++;
+		printf("calc other angles\n");
+		corners[0].ang=0;
+		for(int i=1;i<corners.size();i++) { // TODO calculate all other angles
+			// nothing to do yet
+		}
+		
+		std::sort(corners.begin(),corners.end(), [](SDFCorner &a, SDFCorner &b){ return a.ang>b.ang; }); // sort corners by angle
+		// TODO delete duplicate  corners
+		printf("Adding sub edges\n");
+		for(int i=0;i<corners.size();i++) // fix angles between edges
+		{
+			double gap=(i==corners.size()-1)?360:corners[i+1].ang-corners[i].ang;
+			int split=ceil(((double)gap/71));
+			printf("gap=%g\n",gap);
+			printf("split=%d\n",split);
+			double baseang=corners[i].ang;
+			Vector3d basepos=pts[corners[i].ptind].pos;
+			for(int j=0;j<split-1;j++) {
+				corner.ang=baseang+gap*(j+1)/split;
+				Transform3d mat=Transform3d::Identity();
+				Matrix3d rots=angle_axis_degrees(corner.ang, basept.norm);
+				mat.rotate(rots);
+
+				SDFVertex newpt;
+			        newpt.pos = basepos- basept.pos;
+			 	newpt.pos = ( mat * newpt.pos) + basept.pos;
+				SDF_align(tr,newpt ,tol);
+
+				corner.ptind = pts.size();
+				map3d.add(newpt.pos,pts.size());
+				pts.push_back(newpt);
+
+				corners.insert(corners.begin()+(i+1),corner); 
+				i++;
+			}
+
+		}
+		printf("Now %d edges\n",corners.size());
+		for(int i=0;i<corners.size();i++) {
+			Vector3d &pt=pts[corners[i].ptind].pos;
+			printf("%d ang=%f %d %g/%g/%g \n",i,corners[i].ang,corners[i].ptind,pt[0],pt[1],pt[2]);
+		}
+		perimeter_inds.pop_back();
+		// TODO ketten vernuepefen, mit tris combine
+
+
+		int n=corners.size();
+		for(int i=0;i<n;i++)
+		{
+			tri.i[0]=baseptind;
+			tri.i[1]=corners[i].ptind;
+			tri.i[2]=corners[(i+1)%n].ptind;
+			tris.push_back(tri);
+		}
+		// TODO draw triangles
 	}
-	map3d.dump();
-
-	// identify specified dense points
-	// iterate
-	
-	vert_dense = vert_sparse;
-	
-	// TODO polygone formen
-
 	auto p = new PolySet(3, true);
-	for(int i=0;i<vert_dense.size();i++) {
-		printf("%g/%g/%g\n",vert_dense[i].pos[0],vert_dense[i].pos[1], vert_dense[i].pos[2]);
-		debug_point(p,vert_dense[i]);
-	}
 
-/*	
-	tris_finished = tris_work;
-	printf("%d Points and %d Triangles generated\n",vert.size(),tris_finished.size());
-	for(int i=0;i<tris_finished.size();i++) {
+	printf("%d Points and %d Triangles generated\n",pts.size(),tris.size());
+	for(int i=0;i<tris.size();i++) {
 		p->append_poly(3);
 		for(int j=0;j<3;j++) {
-			int ind=tris_finished[i].i[j];
-			p->append_vertex(vert[ind].pos[0],vert[ind].pos[1],vert[ind].pos[2]);
+			int ind=tris[i].i[j];
+			p->append_vertex(pts[ind].pos[0],pts[ind].pos[1],pts[ind].pos[2]);
 		}
 	}
-*/	
 	return p;
 }
 #define MY_SDF 
@@ -585,7 +620,6 @@ const Geometry *FrepNode::createGeometry() const
 		p = new PolySet(3, true);
 		printf("render start\n");
                 mesh = Mesh::render(*tree[0], reg ,settings);
-		printf("render end %d\n",mesh->branes.size());
 		if(mesh != NULL) {
 			libfive_tri t;
 			for (const auto& t : mesh->branes)
@@ -599,7 +633,6 @@ const Geometry *FrepNode::createGeometry() const
 				}
 			}
 		}
-		printf("convert end\n");
 #endif		
 	} else if(exp->ob_type == &PyFunction_Type) {
 		printf("Python Function!\n");

@@ -26,11 +26,12 @@
 
 #include "qtgettext.h"
 #include "QGLView.h"
-#include "glew-utils.h"
 #include "Preferences.h"
 #include "Renderer.h"
 #include "degree_trig.h"
+#if defined(USE_GLEW) || defined(OPENCSG_GLEW)
 #include "glew-utils.h"
+#endif
 
 #include <QApplication>
 #include <QWheelEvent>
@@ -43,6 +44,9 @@
 #include <QTextEdit>
 #include <QVBoxLayout>
 #include <QErrorMessage>
+#ifdef USE_GLAD
+#include <QOpenGLContext>
+#endif
 #include "OpenCSGWarningDialog.h"
 
 #include <cstdio>
@@ -85,9 +89,11 @@ void QGLView::viewAll()
 
 void QGLView::initializeGL()
 {
+#if defined(USE_GLEW) || defined(OPENCSG_GLEW)
   // Since OpenCSG requires glew, we need to initialize it.
   // ..in a separate compilation unit to avoid duplicate symbols with GLAD.
   initializeGlew();
+#endif
 #ifdef USE_GLAD
   // We could ask for gladLoadGLES2UserPtr() here if we want to use GLES2+
   const auto version = gladLoadGLUserPtr([](void *ctx, const char *name) -> GLADapiproc {
@@ -137,7 +143,7 @@ void QGLView::display_opencsg_warning_dialog()
   message += _("It is highly recommended to use OpenSCAD on a system with "
                "OpenGL 2.0 or later.\n"
                "Your renderer information is as follows:\n");
-#ifdef USE_GLEW
+#if defined(USE_GLEW) || defined(OPENCSG_GLEW)
   QString rendererinfo(_("GLEW version %1\n%2 (%3)\nOpenGL version %4\n"));
   message += rendererinfo.arg((const char *)glewGetString(GLEW_VERSION),
                               (const char *)glGetString(GL_RENDERER),
@@ -358,7 +364,9 @@ void QGLView::wheelEvent(QWheelEvent *event)
 {
   const auto pos = Q_WHEEL_EVENT_POSITION(event);
   const int v = event->angleDelta().y();
-  if (this->mouseCentricZoom) {
+  if (QApplication::keyboardModifiers() & Qt::ShiftModifier) {
+    zoomFov (v);
+  } else if (this->mouseCentricZoom) {
     zoomCursor(pos.x(), pos.y(), v);
   } else {
     zoom(v, true);
@@ -378,6 +386,13 @@ void QGLView::ZoomOut()
 void QGLView::zoom(double v, bool relative)
 {
   this->cam.zoom(v, relative);
+  update();
+  emit cameraChanged();
+}
+
+void QGLView::zoomFov(double v)
+{
+  this->cam.setVpf( this->cam.fovValue () * pow(0.9, v / 120.0));
   update();
   emit cameraChanged();
 }

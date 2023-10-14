@@ -29,13 +29,14 @@
 #include "Value.h"
 #include "Expression.h"
 #include "PlatformUtils.h"
+#include <Context.h>
 
 static PyObject *PyInit_openscad(void);
 
 // https://docs.python.org/3.10/extending/newtypes.html 
 
-static PyObject *pythonInitDict=NULL;
-static PyObject *pythonMainModule = NULL ;
+PyObject *pythonInitDict=NULL;
+PyObject *pythonMainModule = NULL ;
 bool python_active;
 bool python_trusted;
 #include "PlatformUtils.h"
@@ -295,7 +296,7 @@ double python_doublefunc(PyObject *cbfunc, double arg)
  * Try to call a python function by name using OpenSCAD module childs and OpenSCAD function arguments: argument order is childs, arguments
  */
 
-PyObject *python_callfunction(const std::string &name, const std::vector<std::shared_ptr<Assignment> > &op_args, const char *&errorstr)
+PyObject *python_callfunction(const std::shared_ptr<const Context> &cxt , const std::string &name, const std::vector<std::shared_ptr<Assignment> > &op_args, const char *&errorstr)
 {
 	PyObject *pFunc = NULL;
 	if(!pythonMainModule){
@@ -328,7 +329,7 @@ PyObject *python_callfunction(const std::string &name, const std::vector<std::sh
 	{
 		Assignment *op_arg=op_args[i].get();
 		shared_ptr<Expression> expr=op_arg->getExpr();
-		Value val = expr.get()->evaluate(NULL);
+		Value val = expr.get()->evaluate(cxt);
 		switch(val.type())
 		{
 			case Value::Type::NUMBER:
@@ -367,22 +368,25 @@ PyObject *python_callfunction(const std::string &name, const std::vector<std::sh
  * Actually trying use python to evaluate a OpenSCAD Module
  */
 
-std::shared_ptr<AbstractNode> python_modulefunc(const ModuleInstantiation *op_module)
+std::shared_ptr<AbstractNode> python_modulefunc(const ModuleInstantiation *op_module,const std::shared_ptr<const Context> &cxt, int *modulefound)
 {
+	*modulefound=0;
 	std::shared_ptr<AbstractNode> result=NULL;
 	const char *errorstr = NULL;
 	do {
-		PyObject *funcresult = python_callfunction(op_module->name(),op_module->arguments, errorstr);
+		PyObject *funcresult = python_callfunction(cxt,op_module->name(),op_module->arguments, errorstr);
 		if (errorstr != NULL){
 			PyErr_SetString(PyExc_TypeError, errorstr);
 			return NULL;
 		}
+		*modulefound=1;
 		if(funcresult == NULL) return NULL;
 
 		if(funcresult->ob_type == &PyOpenSCADType) result=PyOpenSCADObjectToNode(funcresult);
 		else {
-			PyErr_SetString(PyExc_TypeError, "Python function result is  not a solid\n");
-			break;
+			// ignore wrong type. just output valid empty geometry
+//			LOG(message_group::Warning, Location::NONE, cxt->documentRoot(), "Python function result is not a solid.");
+//			break;
 		}
 	} while(0);
 	return result;
@@ -418,10 +422,10 @@ Value python_convertresult(PyObject *arg)
  * Actually trying use python to evaluate a OpenSCAD Function
  */
 
-Value python_functionfunc(const FunctionCall *call )
+Value python_functionfunc(const FunctionCall *call,const std::shared_ptr<const Context> &cxt  )
 {
 	const char *errorstr = NULL;
-	PyObject *funcresult = python_callfunction(call->name, call->arguments, errorstr);
+	PyObject *funcresult = python_callfunction(cxt,call->name, call->arguments, errorstr);
 	if (errorstr != NULL)
 	{
 		PyErr_SetString(PyExc_TypeError, errorstr);
@@ -432,13 +436,54 @@ Value python_functionfunc(const FunctionCall *call )
 	return  python_convertresult(funcresult);
 }
 
+#ifdef ENABLE_LIBFIVE
 extern PyObject *PyInit_libfive(void);
 PyMODINIT_FUNC PyInit_PyLibFive(void);
+#endif
 /*
  * Main python evaluation entry
  */
 
-std::string evaluatePython(const std::string & code, double time)
+void initPython(void)
+{
+    if(pythonInitDict) { /* If already initialized, undo to reinitialize after */
+      finishPython();
+    }
+    if(!pythonInitDict) {
+	    char run_str[80];
+	    PyImport_AppendInittab("openscad", &PyInit_openscad);
+#ifdef ENABLE_LIBFIVE	    
+	    PyImport_AppendInittab("libfive", &PyInit_libfive);
+#endif	    
+	    PyConfig config;
+            PyConfig_InitPythonConfig(&config);
+	    char libdir[256];
+	    snprintf(libdir, 256, "%s/../libraries/python/",PlatformUtils::applicationPath().c_str()); /* add libraries/python to python search path */
+	    PyConfig_SetBytesString(&config, &config.pythonpath_env, libdir);
+//	    Py_Initialize();
+            Py_InitializeFromConfig(&config);
+            PyConfig_Clear(&config);
+
+	    pythonMainModule =  PyImport_AddModule("__main__");
+	    pythonInitDict = PyModule_GetDict(pythonMainModule);
+	    PyInit_PyOpenSCAD();
+#ifdef ENABLE_LIBFIVE	    
+	    PyInit_PyLibFive();
+#endif	    
+	    sprintf(run_str,"from openscad import *\nfa=12.0\nfn=0.0\nfs=2.0\nt=%g",time);
+	    PyRun_String(run_str, Py_file_input, pythonInitDict, pythonInitDict);
+    }
+}
+
+void finishPython(void)
+{
+      if (Py_FinalizeEx() < 0) {
+        exit(120);
+      }
+      pythonInitDict=NULL;
+}
+
+std::string evaluatePython(const std::string & code, double time,AssignmentList &assignments)
 {
   std::string error;
   python_result_node = NULL;
@@ -466,35 +511,54 @@ sys.stderr = catcher_err\n\
 sys.stdout = stdout_bak\n\
 sys.stderr = stderr_bak\n\
 ";
-  wchar_t libfivedir[256];
 
-    if(pythonInitDict) { /* If already initialized, undo to reinitialize after */
-      if (Py_FinalizeEx() < 0) {
-        exit(120);
-      }
-      pythonInitDict=NULL;
-    }
-    if(!pythonInitDict) {
-	    char run_str[80];
-	    PyImport_AppendInittab("openscad", &PyInit_openscad);
-	    PyImport_AppendInittab("libfive", &PyInit_libfive);
-	    PyConfig config;
-            PyConfig_InitPythonConfig(&config);
-	    swprintf(libfivedir, 256, L"%s/../libraries/pylibfive/",PlatformUtils::applicationPath().c_str());
-
-	    PyConfig_SetString(&config, &config.pythonpath_env, libfivedir);
-            Py_InitializeFromConfig(&config);
-            PyConfig_Clear(&config);
-
-	    pythonMainModule =  PyImport_AddModule("__main__");
-	    pythonInitDict = PyModule_GetDict(pythonMainModule);
-	    PyInit_PyOpenSCAD();
-	    PyInit_PyLibFive();
-	    sprintf(run_str,"from openscad import *\nfa=12.0\nfn=0.0\nfs=2.0\nt=%g",time);
-	    PyRun_String(run_str, Py_file_input, pythonInitDict, pythonInitDict);
-    }
     PyRun_SimpleString(python_init_code);
-    PyObject *result = PyRun_String(code.c_str(), Py_file_input, pythonInitDict, pythonInitDict);
+    PyObject *result = PyRun_String(code.c_str(), Py_file_input, pythonInitDict, pythonInitDict); /* actual code is run here */
+
+    PyObject *key, *value;
+    Py_ssize_t pos = 0;
+    PyObject *pFunc;
+
+    PyObject *maindict = PyModule_GetDict(pythonMainModule);
+    assignments.clear();
+    while (PyDict_Next(maindict, &pos, &key, &value)) {
+      PyObject* key1 = PyUnicode_AsEncodedString(key, "utf-8", "~");
+      const char *key_str =  PyBytes_AS_STRING(key1);
+      if(key_str == NULL) continue;
+      if(strcmp(key_str,"fn") == 0) continue;
+      if(strcmp(key_str,"fa") == 0) continue;
+      if(strcmp(key_str,"fs") == 0) continue;
+      if(strcmp(key_str,"t") == 0) continue;
+      if(strcmp(key_str,"__name__") == 0) continue;
+      // annotation "Parameter" missing
+      std::shared_ptr<Literal> lit;
+      bool found=false;
+      if(value == Py_True) {
+        lit = std::make_shared<Literal>(true,Location::NONE);
+        found=true;
+      } else if(value == Py_False) {
+        lit = std::make_shared<Literal>(false,Location::NONE);
+        found=true;
+      } else if(PyFloat_Check(value)) {
+        lit  = std::make_shared<Literal>(PyFloat_AsDouble(value),Location::NONE);
+        found=true;
+      }
+      else if(PyLong_Check(value)){
+        lit = std::make_shared<Literal>(PyLong_AsLong(value)*1.0,Location::NONE);
+        found=true;
+      }
+      else if(PyUnicode_Check(value)){
+        PyObject* value1 = PyUnicode_AsEncodedString(value, "utf-8", "~");
+        const char *value_str =  PyBytes_AS_STRING(value1);
+        lit = std::make_shared<Literal>(value_str,Location::NONE);
+        found=true;
+      }
+      if(found == true) {
+        auto assignment = std::make_shared<Assignment>(key_str,lit);
+        assignments.push_back(assignment);
+      }
+    }
+
     if(result  == NULL) PyErr_Print();
     PyRun_SimpleString(python_exit_code);
 

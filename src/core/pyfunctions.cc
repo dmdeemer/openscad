@@ -30,14 +30,16 @@
 
 #include <Python.h>
 #include <pyopenscad.h>
+#ifdef ENABLE_LIBFIVE
 #include <pylibfive.h>
+#include "FrepNode.h"
+#endif
 
 #include "primitives.h"
 #include "TransformNode.h"
 #include "RotateExtrudeNode.h"
 #include "LinearExtrudeNode.h"
 #include "PathExtrudeNode.h"
-#include "FrepNode.h"
 #include "PullNode.h"
 #include "OversampleNode.h"
 #include "CgalAdvNode.h"
@@ -338,6 +340,7 @@ PyObject *python_polyhedron(PyObject *self, PyObject *args, PyObject *kwargs)
   return PyOpenSCADObjectFromNode(&PyOpenSCADType, node);
 }
 
+#ifdef ENABLE_LIBFIVE
 PyObject *python_frep(PyObject *self, PyObject *args, PyObject *kwargs)
 {
   DECLARE_INSTANCE
@@ -390,7 +393,7 @@ PyObject *python_ifrep(PyObject *self, PyObject *args, PyObject *kwargs)
   return ifrep(ps);
 }
 
-
+#endif
 
 PyObject *python_square(PyObject *self, PyObject *args, PyObject *kwargs)
 {
@@ -981,7 +984,7 @@ PyObject *python_color(PyObject *self, PyObject *args, PyObject *kwargs)
   }
   child = PyOpenSCADObjectToNodeMulti(obj);
   if (child == NULL) {
-    PyErr_SetString(PyExc_TypeError, "Invalid type for  Object in color");
+    PyErr_SetString(PyExc_TypeError, "Invalid type for Object in color");
     return NULL;
   }
 
@@ -1030,6 +1033,7 @@ PyObject *python_color_oo(PyObject *self, PyObject *args, PyObject *kwargs)
   PyObject *result = python_color(self, new_args, kwargs);
   return result;
 }
+typedef std::vector<int> intList;
 
 PyObject *python_mesh(PyObject *self, PyObject *args, PyObject *kwargs)
 {
@@ -1053,7 +1057,7 @@ PyObject *python_mesh(PyObject *self, PyObject *args, PyObject *kwargs)
   std::shared_ptr<const PolySet> ps = dynamic_pointer_cast<const PolySet>(geom);
 
   // create indexed point list
-  std::unordered_map<Vector3d, int, boost::hash<Vector3d> > pointIntMap;
+  std::unordered_map<Vector3d, int > pointIntMap;
   std::vector<Vector3d> pointList; // list of all the points in the object
   std::vector<Vector3d> pointListNew; // list of all the points in the object
   std::vector<intList> polygons; // list polygons represented by indexes
@@ -1113,6 +1117,7 @@ PyObject *python_mesh_oo(PyObject *self, PyObject *args, PyObject *kwargs)
   PyObject *result = python_mesh(self, new_args, kwargs);
   return result;
 }
+
 
 
 PyObject *python_oversample(PyObject *self, PyObject *args, PyObject *kwargs)
@@ -1534,18 +1539,6 @@ PyObject *python_nb_sub(PyObject *arg1, PyObject *arg2, OpenSCADOperator mode)
   std::shared_ptr<AbstractNode> child;
 
   double x, y, z;
-  if (mode == OpenSCADOperator::INTERSECTION &&  !python_vectorval(arg2, &x, &y, &z)) {
-    child = PyOpenSCADObjectToNodeMulti(arg1);
-    if (child == NULL) {
-      PyErr_SetString(PyExc_TypeError, "invalid argument left to operator");
-      return NULL;
-    }
-    auto node = std::make_shared<TransformNode>(instance, "scale");
-    Vector3d scalevec(x, y, z);
-    node->matrix.scale(scalevec);
-    node->children.push_back(child);
-    return PyOpenSCADObjectFromNode(&PyOpenSCADType, node);
-  }
 
   if(arg1 == Py_None && mode == OpenSCADOperator::UNION) return arg2;
   if(arg2 == Py_None && mode == OpenSCADOperator::UNION) return arg1;
@@ -1568,9 +1561,42 @@ PyObject *python_nb_sub(PyObject *arg1, PyObject *arg2, OpenSCADOperator mode)
   return PyOpenSCADObjectFromNode(&PyOpenSCADType, node);
 }
 
-PyObject *python_nb_add(PyObject *arg1, PyObject *arg2) { return python_nb_sub(arg1, arg2,  OpenSCADOperator::UNION); }
-PyObject *python_nb_substract(PyObject *arg1, PyObject *arg2) { return python_nb_sub(arg1, arg2,  OpenSCADOperator::DIFFERENCE); }
-PyObject *python_nb_multiply(PyObject *arg1, PyObject *arg2) { return python_nb_sub(arg1, arg2,  OpenSCADOperator::INTERSECTION); }
+PyObject *python_nb_sub_vec3(PyObject *arg1, PyObject *arg2, int mode) // 0: translate, 1: scale
+{
+  DECLARE_INSTANCE
+  std::shared_ptr<AbstractNode> child;
+
+  double x, y, z;
+  if (!python_vectorval(arg2, &x, &y, &z)) {
+    child = PyOpenSCADObjectToNodeMulti(arg1);
+    if (child == NULL) {
+      PyErr_SetString(PyExc_TypeError, "invalid argument left to operator");
+      return NULL;
+    }
+    if(mode == 0) {
+	    auto node = std::make_shared<TransformNode>(instance, "translate");
+	    Vector3d transvec(x, y, z);
+	    node->matrix.translate(transvec);
+	    node->children.push_back(child);
+	    return PyOpenSCADObjectFromNode(&PyOpenSCADType, node);
+    }
+    if(mode == 1) {
+	    auto node = std::make_shared<TransformNode>(instance, "scale"); 
+	    Vector3d scalevec(x, y, z);
+	    node->matrix.scale(scalevec);
+	    node->children.push_back(child);
+	    return PyOpenSCADObjectFromNode(&PyOpenSCADType, node);
+    }
+  }
+  PyErr_SetString(PyExc_TypeError, "invalid argument right to operator");
+  return NULL;
+}
+
+PyObject *python_nb_add(PyObject *arg1, PyObject *arg2) { return python_nb_sub_vec3(arg1, arg2, 0); } 
+PyObject *python_nb_mul(PyObject *arg1, PyObject *arg2) { return python_nb_sub_vec3(arg1, arg2, 1); }
+PyObject *python_nb_or(PyObject *arg1, PyObject *arg2) { return python_nb_sub(arg1, arg2,  OpenSCADOperator::UNION); }
+PyObject *python_nb_andnot(PyObject *arg1, PyObject *arg2) { return python_nb_sub(arg1, arg2,  OpenSCADOperator::DIFFERENCE); }
+PyObject *python_nb_and(PyObject *arg1, PyObject *arg2) { return python_nb_sub(arg1, arg2,  OpenSCADOperator::INTERSECTION); }
 
 PyObject *python_csg_oo_sub(PyObject *self, PyObject *args, PyObject *kwargs, OpenSCADOperator mode)
 {
@@ -2281,8 +2307,10 @@ PyMethodDef PyOpenSCADFunctions[] = {
   {"cylinder", (PyCFunction) python_cylinder, METH_VARARGS | METH_KEYWORDS, "Create Cylinder."},
   {"sphere", (PyCFunction) python_sphere, METH_VARARGS | METH_KEYWORDS, "Create Sphere."},
   {"polyhedron", (PyCFunction) python_polyhedron, METH_VARARGS | METH_KEYWORDS, "Create Polyhedron."},
+#ifdef ENABLE_LIBFIVE  
   {"frep", (PyCFunction) python_frep, METH_VARARGS | METH_KEYWORDS, "Create F-Rep."},
   {"ifrep", (PyCFunction) python_ifrep, METH_VARARGS | METH_KEYWORDS, "Create Inverse F-Rep."},
+#endif  
 
   {"translate", (PyCFunction) python_translate, METH_VARARGS | METH_KEYWORDS, "Move  Object."},
   {"rotate", (PyCFunction) python_rotate, METH_VARARGS | METH_KEYWORDS, "Rotate Object."},
@@ -2345,9 +2373,46 @@ PyMethodDef PyOpenSCADMethods[] = {
 
 PyNumberMethods PyOpenSCADNumbers =
 {
-  &python_nb_add,
-  &python_nb_substract,
-  &python_nb_multiply
+     python_nb_add,	//binaryfunc nb_add
+     python_nb_andnot,	//binaryfunc nb_subtract
+     python_nb_mul,	//binaryfunc nb_multiply
+     0,			//binaryfunc nb_remainder
+     0,			//binaryfunc nb_divmod
+     0,			//ternaryfunc nb_power
+     0,			//unaryfunc nb_negative
+     0,			//unaryfunc nb_positive
+     0,			//unaryfunc nb_absolute
+     0,			//inquiry nb_bool
+     0,			//unaryfunc nb_invert
+     0,			//binaryfunc nb_lshift
+     0,			//binaryfunc nb_rshift
+     python_nb_and,	//binaryfunc nb_and 
+     0,			//binaryfunc nb_xor
+     python_nb_or,	//binaryfunc nb_or 
+     0,			//unaryfunc nb_int
+     0,			//void *nb_reserved
+     0,			//unaryfunc nb_float
+
+     0,			//binaryfunc nb_inplace_add
+     0,			//binaryfunc nb_inplace_subtract
+     0,			//binaryfunc nb_inplace_multiply
+     0,			//binaryfunc nb_inplace_remainder
+     0,			//ternaryfunc nb_inplace_power
+     0,			//binaryfunc nb_inplace_lshift
+     0,			//binaryfunc nb_inplace_rshift
+     0,			//binaryfunc nb_inplace_and
+     0,			//binaryfunc nb_inplace_xor
+     0,			//binaryfunc nb_inplace_or
+
+     0,			//binaryfunc nb_floor_divide
+     0,			//binaryfunc nb_true_divide
+     0,			//binaryfunc nb_inplace_floor_divide
+     0,			//binaryfunc nb_inplace_true_divide
+
+     0,			//unaryfunc nb_index
+
+     0,			//binaryfunc nb_matrix_multiply
+     0			//binaryfunc nb_inplace_matrix_multiply
 };
 
 PyMappingMethods PyOpenSCADMapping =

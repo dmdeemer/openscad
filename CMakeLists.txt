@@ -33,8 +33,11 @@ option(ENABLE_TESTS "Run testsuite after building." ON)
 option(EXPERIMENTAL "Enable Experimental Features" OFF)
 option(SNAPSHOT "Create dev snapshot, uses nightly icons" OFF)
 option(HEADLESS "Build without GUI frontend" OFF)
-option(ENABLE_EGL "Enable EGL instead of GLX support if available" OFF)
-option(USE_GLAD "Use GLAD instead of glew" OFF)
+option(ENABLE_EGL "Enable EGL support if available" ON)
+option(ENABLE_GLX "Enable GLX support if available" ON)
+# For now, we'll default to whatever OpenCSG uses (>=1.6 -> GLAD, <1.6 -> GLEW)
+option(USE_GLAD "Use GLAD. Mutually exclusive from USE_GLEW" OFF)
+option(USE_GLEW "Use GLEW. Mutually exclusive from USE_GLEW" OFF)
 option(WASM "Build WebAssembly, (implies NULLGL=ON) " OFF)
 option(NULLGL "Build without OpenGL, (implies HEADLESS=ON) " OFF)
 option(IDPREFIX "Prefix CSG nodes with index # (debugging purposes only, will break node cache)" OFF)
@@ -50,6 +53,7 @@ option(ENABLE_HIDAPI "Enable support for HIDAPI input driver." ON)
 option(ENABLE_TBB "Enable support for oneAPI Threading Building Blocks." ON)
 option(ALLOW_BUNDLED_HIDAPI "Allow usage of bundled HIDAPI library (Windows only)." OFF)
 option(ENABLE_PYTHON "Enable experimental Python Interpreter" OFF)
+option(ENABLE_LIBFIVE "Enable libfive Library" OFF)
 include(CMakeDependentOption)
 cmake_dependent_option(APPLE_UNIX "Build OpenSCAD in Unix mode in MacOS X instead of an Apple Bundle" OFF "APPLE" OFF)
 cmake_dependent_option(ENABLE_QTDBUS "Enable DBus input driver for Qt5." ON "NOT HEADLESS" OFF)
@@ -130,12 +134,6 @@ if(WASM)
   target_compile_definitions(OpenSCAD PRIVATE CGAL_DISABLE_ROUNDING_MATH_CHECK)
 endif()
 
-if(USE_GLAD)
-  target_compile_definitions(OpenSCAD PRIVATE USE_GLAD)
-else()
-  target_compile_definitions(OpenSCAD PRIVATE USE_GLEW)
-endif()
-
 if(NULLGL)
   set(HEADLESS ON CACHE BOOL "" FORCE)
 endif()
@@ -186,10 +184,6 @@ add_subdirectory(submodules)
 # The submodules will set up mimalloc if needed, and we need to defer any 
 # target_link_libraries() calls until after that.
 
-if(USE_GLAD)
-  target_link_libraries(OpenSCAD PRIVATE ${CMAKE_DL_LIBS})
-endif()
-
 if (MXECROSS)
   target_compile_definitions(OpenSCAD PRIVATE LIBXML_STATIC STATIC_QT_SVG_PLUGIN)
   target_compile_definitions(OpenSCAD PRIVATE GLEW_STATIC)
@@ -214,14 +208,35 @@ macro(find_graphics)
         target_include_directories(OpenSCAD SYSTEM PRIVATE ${OPENCSG_INCLUDE_DIRS})
       endif()
     else()
+      include("submodules/CMakeLists-OpenCSG.txt")
       target_link_libraries(OpenSCAD PRIVATE OpenCSG)
-      message(STATUS "OpenCSG: <submodule>")
-    endif()
+      message(STATUS "OpenCSG submodule: ${OPENCSG_VERSION_STRING}")
+    endif(NOT USE_BUILTIN_OPENCSG)
+
     target_compile_definitions(OpenSCAD PRIVATE ENABLE_OPENCSG)
 
-    find_package(GLEW REQUIRED QUIET)
-    message(STATUS "GLEW: ${GLEW_VERSION}")
-    target_link_libraries(OpenSCAD PRIVATE GLEW::glew)
+    if (${OPENCSG_VERSION_STRING} VERSION_LESS "1.6.0")
+      set(OPENCSG_GLEW ON)
+      target_compile_definitions(OpenSCAD PRIVATE OPENCSG_GLEW)
+    endif()
+
+    if (NOT USE_GLAD AND NOT USE_GLEW)
+      if (OPENCSG_GLEW)
+        set(USE_GLEW ON)
+        set(WRANGLER "glew")
+      else()
+	set(USE_GLAD ON)
+        set(WRANGLER "GLAD")
+      endif()
+      message(STATUS "USE_GLAD/USE_GLEW not specified: Defaulting to ${WRANGLER}")
+    endif()
+
+    if (USE_GLEW OR OPENCSG_GLEW)
+      find_package(GLEW REQUIRED QUIET)
+      message(STATUS "GLEW: ${GLEW_VERSION}")
+      target_link_libraries(OpenSCAD PRIVATE GLEW::glew)
+      set(GLEW_SOURCES src/glview/glew-utils.cc)
+    endif()
 
     find_package(OpenGL REQUIRED QUIET)
     target_link_libraries(OpenSCAD PRIVATE ${OPENGL_LIBRARIES})
@@ -311,6 +326,10 @@ else()
   find_graphics()
 endif()
 
+if(USE_GLAD)
+  target_link_libraries(OpenSCAD PRIVATE ${CMAKE_DL_LIBS})
+endif()
+
 if (("${Boost_VERSION}" VERSION_GREATER "1.72") AND ("${Boost_VERSION}" VERSION_LESS "1.76"))
   # Avoid warning messages from boost which are also caused by boost's code.
   #   https://github.com/boostorg/property_tree/issues/51
@@ -363,18 +382,41 @@ target_include_directories(OpenSCAD SYSTEM PRIVATE ${LIBXML2_INCLUDE_DIR})
 target_link_libraries(OpenSCAD PRIVATE ${LIBXML2_LIBRARIES})
 
 if(ENABLE_PYTHON)
-  message(STATUS "Python enabled" )
+  if(APPLE)	
+    target_include_directories(OpenSCAD PRIVATE "/usr/local/include")
+    target_link_directories(OpenSCAD PRIVATE "/usr/local/lib")
+    target_link_libraries(OpenSCAD PRIVATE "libnettle.a")
+  else()	  
+    find_package(NETTLE REQUIRED)
+    target_include_directories(OpenSCAD PRIVATE ${NETTLE_INCLUDE_DIRS})
+    target_link_libraries(OpenSCAD PRIVATE ${NETTLE_LIBRARIES})
+  endif()    
+  message(STATUS "Python enabled, using Crypto++ ${PC_CryptoPP_VERSION}")
   if(MXECROSS)
-    target_include_directories(OpenSCAD PRIVATE "/home/gsohler/openscad_deps/mxe/usr/x86_64-w64-mingw32.static.posix/include/python3.10")
-    target_link_libraries(OpenSCAD PRIVATE  "${CMAKE_SOURCE_DIR}/libpython3.10.dll.a")
-  else()
-  find_package(Python REQUIRED COMPONENTS Interpreter Development)
-  find_package(CryptoPP REQUIRED)
-  message(STATUS "Python enabled, using Crypto++ ${PC_CRYPTOPP_VERSION}")
-  target_include_directories(OpenSCAD PRIVATE ${Python_INCLUDE_DIRS})
-  target_include_directories(OpenSCAD PRIVATE ${CRYPTOPP_INCLUDE_DIRS})
-  target_link_libraries(OpenSCAD PRIVATE ${Python_LIBRARIES})
-  target_link_libraries(OpenSCAD PRIVATE ${CRYPTOPP_LIBRARIES})
+    SET(PYTHON_DEVPATH "${CMAKE_CURRENT_SOURCE_DIR}/python")
+    SET(PYTHON_PACKAGEFOLDER "https://mirror.msys2.org/mingw/mingw64")
+    SET(PYTHON_PACKAGEFILE "mingw-w64-x86_64-python-3.11.5-2-any.pkg.tar.zst")
+    SET(PYTHON_VERSION "python3.11")
+    SET(PYTHON_ARCHIVE "${PYTHON_DEVPATH}/mingw64/lib/lib${PYTHON_VERSION}.dll.a")
+    add_custom_command(
+      OUTPUT ${PYTHON_ARCHIVE}
+      COMMAND mkdir -p python && cd python && wget ${PYTHON_PACKAGEFOLDER}/${PYTHON_PACKAGEFILE} && tar -I zstd -xf ${PYTHON_PACKAGEFILE}
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    add_custom_target(python_lib DEPENDS ${PYTHON_ARCHIVE})
+    target_include_directories(OpenSCAD SYSTEM PRIVATE "${PYTHON_DEVPATH}/mingw64/include/${PYTHON_VERSION}")
+    target_link_libraries(OpenSCAD PRIVATE "${PYTHON_DEVPATH}/mingw64/lib/lib${PYTHON_VERSION}.dll.a")
+  else()	  
+    find_package(Python REQUIRED COMPONENTS Interpreter Development)
+    target_include_directories(OpenSCAD PRIVATE ${Python_INCLUDE_DIRS})
+    target_link_libraries(OpenSCAD PRIVATE ${Python_LIBRARIES})
+  endif()  
+  if(ENABLE_LIBFIVE)
+    add_subdirectory(submodules/libfive EXCLUDE_FROM_ALL)
+    target_link_libraries(OpenSCAD PRIVATE libfive)
+    target_compile_definitions(OpenSCAD PRIVATE BUILD_STUDIO_APP=OFF)
+    target_compile_definitions(OpenSCAD PRIVATE BUILD_GUILE_BINDINGS=OFF)
+    target_compile_definitions(OpenSCAD PRIVATE BUILD_PYTHON_BINDINGS=OFF)
   endif()
 endif()
 
@@ -433,9 +475,15 @@ message(STATUS "Flex: ${FLEX_VERSION}")
 
 find_package(BISON REQUIRED QUIET)
 message(STATUS "Bison: ${BISON_VERSION}")
-find_package(JPEG REQUIRED QUIET)
-target_include_directories(OpenSCAD SYSTEM PRIVATE ${JPEG_INCLUDE_DIRS})
-target_link_libraries(OpenSCAD PRIVATE ${JPEG_LIBRARIES})
+if(APPLE)
+    target_include_directories(OpenSCAD PRIVATE "/usr/local/include")
+    target_link_directories(OpenSCAD PRIVATE "/usr/local/lib")
+    target_link_libraries(OpenSCAD PRIVATE "libjpeg.a")
+else()	
+  find_package(JPEG REQUIRED QUIET)
+  target_include_directories(OpenSCAD SYSTEM PRIVATE ${JPEG_INCLUDE_DIRS})
+  target_link_libraries(OpenSCAD PRIVATE ${JPEG_LIBRARIES})
+endif()
 
 if(NOT MSVC)
   find_package(Lib3MF QUIET)
@@ -449,17 +497,20 @@ if(NOT MSVC)
   endif()
 endif()
 
-if(USE_BUILTIN_OPENCSG)
-  include("submodules/CMakeLists-OpenCSG.txt")
-endif(USE_BUILTIN_OPENCSG)
-
 # Automatically add the current source and build directories to the include path.
 set(CMAKE_INCLUDE_CURRENT_DIR ON) # (does not propagate down to subdirectories)
+
+if(USE_GLAD)
+  target_compile_definitions(OpenSCAD PRIVATE USE_GLAD)
+else()
+  target_compile_definitions(OpenSCAD PRIVATE USE_GLEW)
+endif()
 
 target_include_directories(OpenSCAD PRIVATE
   "src"
   "src/core"
   "src/core/customizer"
+  "src/ext"
   "src/ext/json"
   "src/ext/lexertl/include"
   "src/ext/libtess2/Include"
@@ -581,15 +632,17 @@ else()
 endif()
 if(APPLE)
   target_compile_definitions(OpenSCAD PRIVATE OPENSCAD_OS="Mac OS X")
-  message(STATUS "Offscreen OpenGL Context - using Apple NSOpenGL")
+  message(STATUS "Offscreen OpenGL Context - using Apple CGL/NSOpenGL")
   set(PLATFORM_SOURCES src/platform/PlatformUtils-mac.mm src/io/imageutils-macosx.cc src/platform/CocoaUtils.mm)
   if(NOT HEADLESS)
     set(PLATFORM_SOURCES ${PLATFORM_SOURCES} src/gui/AppleEvents.cc)
   endif()
   if(NOT NULLGL)
     target_compile_definitions(OpenSCAD PRIVATE GL_SILENCE_DEPRECATION)
-    set(OFFSCREEN_METHOD "Apple NSOpenGL")
-    set(PLATFORM_SOURCES ${PLATFORM_SOURCES} src/glview/offscreen-old/OffscreenContextNSOpenGL.mm)
+    set(OFFSCREEN_METHOD "Apple CGL/NSOpenGL")
+    set(PLATFORM_SOURCES ${PLATFORM_SOURCES}
+        src/glview/offscreen-old/OffscreenContextNSOpenGL.mm
+        src/glview/OffscreenContextCGL.cc)
   endif()
   find_library(COCOA_LIBRARY Cocoa)
   target_link_libraries(OpenSCAD PRIVATE ${COCOA_LIBRARY})
@@ -597,23 +650,28 @@ elseif(UNIX)
   target_compile_definitions(OpenSCAD PRIVATE OPENSCAD_OS="Unix")
   set(PLATFORM_SOURCES src/io/imageutils-lodepng.cc src/platform/PlatformUtils-posix.cc)
   if(NOT NULLGL)
+    set(OFFSCREEN_METHOD "Unix")
     if(ENABLE_EGL AND OpenGL_EGL_FOUND)
       target_compile_definitions(OpenSCAD PRIVATE ENABLE_EGL)
-      set(OFFSCREEN_METHOD "Unix EGL")
-      message(STATUS "Offscreen OpenGL Context - using Unix EGL")
-      set(PLATFORM_SOURCES ${PLATFORM_SOURCES} src/glview/offscreen-old/OffscreenContextEGL.cc)
+      set(OFFSCREEN_METHOD "${OFFSCREEN_METHOD} EGL")
+      set(PLATFORM_SOURCES ${PLATFORM_SOURCES}
+	src/glview/offscreen-old/OffscreenContextEGL.cc
+        src/glview/OffscreenContextEGL.cc)
       if (NOT USE_GLAD)
         target_compile_definitions(OpenSCAD PRIVATE GLEW_EGL)
       endif()
       target_link_libraries(OpenSCAD PRIVATE OpenGL::EGL)
-    else()
-      target_compile_definitions(OpenSCAD PRIVATE ENABLE_GLX)
-      set(OFFSCREEN_METHOD "Unix GLX on X11")
-      message(STATUS "Offscreen OpenGL Context - using Unix GLX on X11")
-      set(PLATFORM_SOURCES ${PLATFORM_SOURCES} src/glview/offscreen-old/OffscreenContextGLX.cc)
-      find_package(X11 REQUIRED)
-      target_link_libraries(OpenSCAD PRIVATE X11::X11)
     endif()
+    if(ENABLE_GLX AND OpenGL_GLX_FOUND)
+      target_compile_definitions(OpenSCAD PRIVATE ENABLE_GLX)
+      set(OFFSCREEN_METHOD "${OFFSCREEN_METHOD} GLX")
+      set(PLATFORM_SOURCES ${PLATFORM_SOURCES}
+          src/glview/offscreen-old/OffscreenContextGLX.cc
+          src/glview/OffscreenContextGLX.cc)
+      find_package(X11 REQUIRED)
+      target_link_libraries(OpenSCAD PRIVATE X11::X11 ${CMAKE_DL_LIBS})
+    endif()
+    message(STATUS "Offscreen OpenGL Context - using ${OFFSCREEN_METHOD}")
   endif()
 elseif(WIN32)
   target_compile_definitions(OpenSCAD PRIVATE NOGDI)
@@ -661,7 +719,6 @@ set(CORE_SOURCES
   src/core/ImportNode.cc
   src/core/LinearExtrudeNode.cc
   src/core/PathExtrudeNode.cc
-  src/core/FrepNode.cc
   src/core/OversampleNode.cc
   src/core/LocalScope.cc
   src/core/ScopeContext.cc
@@ -776,9 +833,14 @@ set(CORE_SOURCES
 if(ENABLE_PYTHON)
 	list(APPEND CORE_SOURCES
 		    src/core/pyopenscad.cc 
-		    src/core/pylibfive.cc
 		    src/core/pyfunctions.cc)
 	target_compile_definitions(OpenSCAD PRIVATE ENABLE_PYTHON)
+	if(ENABLE_LIBFIVE)
+		list(APPEND CORE_SOURCES
+			src/core/pylibfive.cc 
+	  		src/core/FrepNode.cc)
+		target_compile_definitions(OpenSCAD PRIVATE ENABLE_LIBFIVE)
+	endif()
 endif()
 
 set(CGAL_SOURCES
@@ -843,11 +905,6 @@ if(EXPERIMENTAL)
   target_compile_definitions(OpenSCAD PRIVATE ENABLE_MANIFOLD)
   list(APPEND Sources ${MANIFOLD_SOURCES})
 endif()
-add_subdirectory(submodules/libfive EXCLUDE_FROM_ALL)
-target_link_libraries(OpenSCAD PRIVATE libfive)
-target_compile_definitions(OpenSCAD PRIVATE BUILD_STUDIO_APP=OFF)
-target_compile_definitions(OpenSCAD PRIVATE BUILD_GUILE_BINDINGS=OFF)
-target_compile_definitions(OpenSCAD PRIVATE BUILD_PYTHON_BINDINGS=OFF)
 
 #
 # Offscreen OpenGL context source code
@@ -871,13 +928,13 @@ else()
     src/glview/VBORenderer.cc
     src/glview/GLView.cc
     src/glview/VertexStateManager.cc
-    src/glview/glew-utils.cc
     src/glview/OffscreenView.cc
     src/glview/cgal/CGALRenderer.cc
     src/glview/preview/OpenCSGRenderer.cc
     src/glview/preview/ThrownTogetherRenderer.cc
     src/io/export_png.cc
-    src/io/imageutils.cc)
+    src/io/imageutils.cc
+    ${GLEW_SOURCES})
 endif()
 
 
@@ -1150,6 +1207,7 @@ if(NOT APPLE OR APPLE_UNIX)
       endif()
       install(FILES ${CMAKE_BINARY_DIR}/submodules/mimalloc/mimalloc.dll DESTINATION ".")
     endif()
+    install(FILES ${CMAKE_SOURCE_DIR}/libpython3.11.dll DESTINATION ".")
   else()
     install(FILES ${CMAKE_CURRENT_LIST_DIR}/doc/openscad.1 DESTINATION ${CMAKE_INSTALL_MANDIR}/man1 RENAME openscad${SUFFIX_WITH_DASH}.1)
     install(FILES ${CMAKE_CURRENT_LIST_DIR}/openscad.appdata.xml DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/metainfo RENAME org.openscad.OpenSCAD${SUFFIX_WITH_DASH}.appdata.xml)
@@ -1204,6 +1262,13 @@ configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Modules/openscad_cpack.cmake.i
 # CPACK_PROJECT_CONFIG_FILE is for configuring CPack-generator specific settings
 set(CPACK_PROJECT_CONFIG_FILE "${CMAKE_BINARY_DIR}/openscad_cpack.cmake")
 set(CPACK_THREADS 0)
+
+if (MXECROSS)
+  get_target_property(TARGET_LIBRARIES OpenSCAD LINK_LIBRARIES)
+  LIST(FILTER TARGET_LIBRARIES EXCLUDE REGEX .*libdouble-conversion.a )
+  set_property(TARGET OpenSCAD PROPERTY LINK_LIBRARIES  ${TARGET_LIBRARIES} )
+  get_target_property(TARGET_LIBRARIES2 OpenSCAD LINK_LIBRARIES)
+endif()
 
 if(ENABLE_TESTS)
   enable_testing()
