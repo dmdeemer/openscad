@@ -452,6 +452,34 @@ void debug_point(PolySet *p, SDFVertex &vert)
 
 #define myminax(a,b) a<b?a:b
 
+void draw_line(Vector3d  p1, Vector3d p2,std::vector<SDFVertex> &pts,std::vector<SDFTriangle> &tris)
+{
+	Vector3d  n=(p2-p1).normalized();
+	Vector3d ydir=Vector3d(1,0,0).cross(n).normalized();
+	Vector3d xdir=ydir.cross(n).normalized();
+	xdir *= 0.01;
+	ydir *= 0.01;
+	std::vector<int> inds;
+	SDFTriangle tri;
+	for(int i=0;i<8;i++)
+	{
+		SDFVertex pt;
+		pt.pos=(i&4)?p2:p1;
+		pt.pos += (i&1)?xdir:-xdir;
+		pt.pos += (i&2)?ydir:-ydir;
+		inds.push_back(pts.size());
+		pts.push_back(pt);
+	}
+	tri.i[0]=inds[0]; tri.i[1]=inds[1]; tri.i[2]=inds[5]; tris.push_back(tri);
+	tri.i[0]=inds[0]; tri.i[1]=inds[5]; tri.i[2]=inds[4]; tris.push_back(tri);
+	tri.i[0]=inds[1]; tri.i[1]=inds[3]; tri.i[2]=inds[7]; tris.push_back(tri);
+	tri.i[0]=inds[1]; tri.i[1]=inds[7]; tri.i[2]=inds[5]; tris.push_back(tri);
+	tri.i[0]=inds[3]; tri.i[1]=inds[2]; tri.i[2]=inds[6]; tris.push_back(tri);
+	tri.i[0]=inds[3]; tri.i[1]=inds[2]; tri.i[2]=inds[7]; tris.push_back(tri);
+	tri.i[0]=inds[2]; tri.i[1]=inds[0]; tri.i[2]=inds[4]; tris.push_back(tri);
+	tri.i[0]=inds[2]; tri.i[1]=inds[4]; tri.i[2]=inds[6]; tris.push_back(tri);
+}
+
 PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 {
 	Vector3d xdir(1,0,0),ydir(0,1,0),zdir(0,0,1);
@@ -479,16 +507,19 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 	perimeter_inds.push_back(pts.size());
 	pts.push_back(v);
 
-	while(perimeter_inds.size() > 0) // continue until perimeter is not closed
+	int rounds=0;
+	while(perimeter_inds.size() > 0 && rounds < 2) // continue until perimeter is not closed
 	{
+		printf("%d points in perimeter\n",perimeter_inds.size());
 		int baseptind=perimeter_inds[perimeter_inds.size()-1]; // take one perimeter index
 		printf("Progressing %d\n",baseptind);
 
-		// find adjacent points
+		// find nearby points
 		std::vector<Vector3d> result;
 		std::vector<int> resultind;
 		SDFVertex basept=pts[baseptind];
 		map3d.find(basept.pos,res*1.5,result,resultind, 10);
+		printf("Points found: %d\n",result.size());
 
 		// filter center point
 		std::vector<SDFCorner> corners; 
@@ -496,14 +527,14 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 		for(int i=0;i<result.size();i++)
 		{
 			if(result[i] == basept.pos){
-			       	result.erase(result.begin() + i);
+				result.erase(result.begin() + i);
 				continue;
 			} else {
 				corner.ptind=resultind[i];
 				corners.push_back(corner);
 			}
 		}
-		printf("%d points found\n",corners.size());
+		printf("%d points founda after filtering\n",corners.size());
 
 		// special case: no points
 		if(corners.size() == 0) {
@@ -530,25 +561,38 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 		}
 		printf("calc other angles\n");
 		corners[0].ang=0;
-		for(int i=1;i<corners.size();i++) { // TODO calculate all other angles
-			// nothing to do yet
+		Vector3d side1=(pts[corners[0].ptind].pos-basept.pos).cross(basept.norm).cross(basept.norm).normalized();
+		for(int i=1;i<corners.size();i++) {
+			Vector3d side2=(pts[corners[i].ptind].pos-basept.pos).cross(basept.norm).cross(basept.norm).normalized();
+			double ang=acos(side1.dot(side2))*180.0/3.1415926;
+			if(side1.cross(side2).dot(basept.norm) < 0) ang=-ang;
+			while(ang < 0) ang+= 360;
+			corners[i].ang=ang;
 		}
 		
-		std::sort(corners.begin(),corners.end(), [](SDFCorner &a, SDFCorner &b){ return a.ang>b.ang; }); // sort corners by angle
+		std::sort(corners.begin(),corners.end(), [](SDFCorner &a, SDFCorner &b){ return a.ang<b.ang; }); // sort corners by angle
 		// TODO delete duplicate  corners
+		printf("Before add %d edges\n",corners.size());
+		for(int i=0;i<corners.size();i++) {
+			Vector3d &pt=pts[corners[i].ptind].pos;
+			printf("%d ang=%f %d %g/%g/%g \n",i,corners[i].ang,corners[i].ptind,pt[0],pt[1],pt[2]);
+		}
+
 		printf("Adding sub edges\n");
 		for(int i=0;i<corners.size();i++) // fix angles between edges
 		{
-			double gap=(i==corners.size()-1)?360:corners[i+1].ang-corners[i].ang;
-			int split=ceil(((double)gap/71));
+			printf("i=%d\n",i);
+			double gap=((i==corners.size()-1)?360:corners[i+1].ang)-corners[i].ang;
 			printf("gap=%g\n",gap);
-			printf("split=%d\n",split);
+			int ranges=ceil(((double)gap/71));
+			printf("ranges=%d\n",ranges);
 			double baseang=corners[i].ang;
 			Vector3d basepos=pts[corners[i].ptind].pos;
-			for(int j=0;j<split-1;j++) {
-				corner.ang=baseang+gap*(j+1)/split;
+			for(int j=0;j<ranges-1;j++) {
+				corner.ang=baseang+gap*(j+1)/ranges;
+				printf("sub angle = %g\n",corner.ang);
 				Transform3d mat=Transform3d::Identity();
-				Matrix3d rots=angle_axis_degrees(corner.ang, basept.norm);
+				Matrix3d rots=angle_axis_degrees(corner.ang-baseang, basept.norm);
 				mat.rotate(rots);
 
 				SDFVertex newpt;
@@ -566,23 +610,74 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 
 		}
 		printf("Now %d edges\n",corners.size());
-		for(int i=0;i<corners.size();i++) {
+		int n=corners.size();
+		for(int i=0;i<n;i++) {
 			Vector3d &pt=pts[corners[i].ptind].pos;
 			printf("%d ang=%f %d %g/%g/%g \n",i,corners[i].ang,corners[i].ptind,pt[0],pt[1],pt[2]);
+
+			// TODO remove calcualte angle between
+			Vector3d side1=(pts[corners[i].ptind].pos-basept.pos).cross(basept.norm).cross(basept.norm).normalized();
+			Vector3d side2=(pts[corners[(i+1)%n].ptind].pos-basept.pos).cross(basept.norm).cross(basept.norm).normalized();
+			double realang=acos(side1.dot(side2))*180.0/3.1415l;
+			printf("REal ang is %g\n",realang);
 		}
-		perimeter_inds.pop_back();
-		// TODO ketten vernuepefen, mit tris combine
 
 
-		int n=corners.size();
-		for(int i=0;i<n;i++)
+		if(perimeter_inds.size() == 1) {
+			perimeter_inds.pop_back();
+			for(int i=0;i<n;i++)
+			{
+				tri.i[0]=baseptind;
+				tri.i[1]=corners[i].ptind;
+				tri.i[2]=corners[(i+1)%n].ptind;
+				tris.push_back(tri);
+				perimeter_inds.push_back(corners[i].ptind);
+			}
+		}
+		else
 		{
-			tri.i[0]=baseptind;
-			tri.i[1]=corners[i].ptind;
-			tri.i[2]=corners[(i+1)%n].ptind;
-			tris.push_back(tri);
+			
+			int mode=0;
+			std::vector<int> resultchain;
+			int newind=0;
+			int oldind=0;
+			int n=corners.size();
+			while(mode != 3) // TODO viel sicherer und eleganter
+			{
+				printf("mode=%d\n",mode);
+				switch(mode) {
+					case 0: // inaktiv im neuen
+						if(corners[newind].ptind == 5) { mode=1; break;}
+						newind++;
+						break;
+					case 1: // aktiv im neuen
+						if(corners[newind].ptind == 1)
+						{
+							resultchain.push_back(corners[newind].ptind);
+							mode=2;oldind=1; break; 
+						}
+						printf("t %d %d\n",newind, corners[newind].ptind );
+						tri.i[0]=baseptind;
+						tri.i[1]=corners[newind].ptind;
+						tri.i[2]=corners[(newind+1)%n].ptind;
+						printf("t %d %d %d\n",tri.i[0],tri.i[1],tri.i[2]);
+						tris.push_back(tri);
+						resultchain.push_back(corners[newind].ptind);
+						newind++;
+						break;
+					case 2: // aktiv im alten
+						if(perimeter_inds[oldind] == 5) { mode=3; break ; }
+						resultchain.push_back(perimeter_inds[oldind]);
+						oldind++;
+
+				}
+			}
+			printf("finished\n");
+			for(int i=0;i<resultchain.size();i++) printf("%d \n",resultchain[i]);
 		}
-		// TODO draw triangles
+
+
+		rounds++;
 	}
 	auto p = new PolySet(3, true);
 
