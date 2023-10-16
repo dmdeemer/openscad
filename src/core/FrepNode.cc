@@ -305,6 +305,7 @@ typedef struct
 {
 	double ang;
 	int ptind;
+	int is_new;
 } SDFCorner ;
 
 typedef struct 
@@ -507,8 +508,8 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 	perimeter_inds.push_back(pts.size());
 	pts.push_back(v);
 
-	int rounds=0;
-	while(perimeter_inds.size() > 0 && rounds < 2) // continue until perimeter is not closed
+	int round=0;
+	while(perimeter_inds.size() > 0 && round < 2) // continue until perimeter is not closed
 	{
 		printf("%d points in perimeter\n",perimeter_inds.size());
 		int baseptind=perimeter_inds[perimeter_inds.size()-1]; // take one perimeter index
@@ -531,6 +532,7 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 				continue;
 			} else {
 				corner.ptind=resultind[i];
+				corner.is_new=0;
 				corners.push_back(corner);
 			}
 		}
@@ -590,7 +592,6 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 			Vector3d basepos=pts[corners[i].ptind].pos;
 			for(int j=0;j<ranges-1;j++) {
 				corner.ang=baseang+gap*(j+1)/ranges;
-				printf("sub angle = %g\n",corner.ang);
 				Transform3d mat=Transform3d::Identity();
 				Matrix3d rots=angle_axis_degrees(corner.ang-baseang, basept.norm);
 				mat.rotate(rots);
@@ -603,7 +604,7 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 				corner.ptind = pts.size();
 				map3d.add(newpt.pos,pts.size());
 				pts.push_back(newpt);
-
+				corner.is_new=1;
 				corners.insert(corners.begin()+(i+1),corner); 
 				i++;
 			}
@@ -614,16 +615,10 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 		for(int i=0;i<n;i++) {
 			Vector3d &pt=pts[corners[i].ptind].pos;
 			printf("%d ang=%f %d %g/%g/%g \n",i,corners[i].ang,corners[i].ptind,pt[0],pt[1],pt[2]);
-
-			// TODO remove calcualte angle between
-			Vector3d side1=(pts[corners[i].ptind].pos-basept.pos).cross(basept.norm).cross(basept.norm).normalized();
-			Vector3d side2=(pts[corners[(i+1)%n].ptind].pos-basept.pos).cross(basept.norm).cross(basept.norm).normalized();
-			double realang=acos(side1.dot(side2))*180.0/3.1415l;
-			printf("REal ang is %g\n",realang);
 		}
 
 
-		if(perimeter_inds.size() == 1) {
+		if(round == 0) {
 			perimeter_inds.pop_back();
 			for(int i=0;i<n;i++)
 			{
@@ -637,47 +632,67 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 		else
 		{
 			
-			int mode=0;
 			std::vector<int> resultchain;
-			int newind=0;
-			int oldind=0;
-			int n=corners.size();
-			while(mode != 3) // TODO viel sicherer und eleganter
+			int perimeter_ind=0;
+			int perimeter_n = perimeter_inds.size();
+
+			int corner_ind=0;
+			int corners_n=corners.size();
+
+			int mode=0;
+			if(corners[corner_ind].is_new)
 			{
-				printf("mode=%d\n",mode);
+				printf(" perimeter first not imp[lemented!\n");
+				exit(1);
+			}
+			std::vector<int>::iterator it;
+			int switchnewind=-1;
+			int switcholdind=-1;
+			while(mode != 3) 
+			{
+				// TODO abndere modi: in resultchain starten
 				switch(mode) {
-					case 0: // inaktiv im neuen
-						if(corners[newind].ptind == 5) { mode=1; break;}
-						newind++;
+					case 0: // inaktiv im neuen aber bestehender punkt (0)
+					        it = std::find(perimeter_inds.begin(),perimeter_inds.end(),corners[corner_ind].ptind);
+						if(it != perimeter_inds.end()) {
+							switchnewind=*it;
+							mode=1;
+							break;
+						}
+	
+						corner_ind=(corner_ind+1)%corners_n;
 						break;
 					case 1: // aktiv im neuen
-						if(corners[newind].ptind == 1)
-						{
-							resultchain.push_back(corners[newind].ptind);
-							mode=2;oldind=1; break; 
+					        it = std::find(perimeter_inds.begin(),perimeter_inds.end(),corners[corner_ind].ptind);
+						if(it != perimeter_inds.end() && *it != switchnewind) {
+							switcholdind=*it;
+							resultchain.push_back(corners[corner_ind].ptind);
+							mode=2;perimeter_ind=switcholdind; 
+							break; 
 						}
-						printf("t %d %d\n",newind, corners[newind].ptind );
 						tri.i[0]=baseptind;
-						tri.i[1]=corners[newind].ptind;
-						tri.i[2]=corners[(newind+1)%n].ptind;
-						printf("t %d %d %d\n",tri.i[0],tri.i[1],tri.i[2]);
+						tri.i[1]=corners[corner_ind].ptind;
+						tri.i[2]=corners[(corner_ind+1)%corners_n].ptind;
 						tris.push_back(tri);
-						resultchain.push_back(corners[newind].ptind);
-						newind++;
+						resultchain.push_back(corners[corner_ind].ptind);
+						corner_ind=(corner_ind+1)%corners_n;
 						break;
 					case 2: // aktiv im alten
-						if(perimeter_inds[oldind] == 5) { mode=3; break ; }
-						resultchain.push_back(perimeter_inds[oldind]);
-						oldind++;
+						if(perimeter_inds[perimeter_ind] == switchnewind) { mode=3; break ; }
+						resultchain.push_back(perimeter_inds[perimeter_ind]);
+						perimeter_ind=(perimeter_ind+1)%perimeter_n; 
+						break;
 
 				}
 			}
 			printf("finished\n");
-			for(int i=0;i<resultchain.size();i++) printf("%d \n",resultchain[i]);
+			for(int i=0;i<resultchain.size();i++) printf("%d ",resultchain[i]);
+			printf("\n");
+			perimeter_inds = resultchain;
 		}
 
 
-		rounds++;
+		round++;
 	}
 	auto p = new PolySet(3, true);
 
