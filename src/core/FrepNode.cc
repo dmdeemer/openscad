@@ -509,7 +509,7 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 	pts.push_back(v);
 
 	int round=0;
-	while(perimeter_inds.size() > 0 && round < 4) // continue until perimeter is not closed
+	while(perimeter_inds.size() > 0 && round < 5) // continue until perimeter is not closed
 	{
 		printf("Round %d\n",round);
 		printf("%d points in perimeter\n",perimeter_inds.size());
@@ -651,29 +651,42 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 				printf(" perimeter first not imp[lemented!\n");
 				exit(1);
 			}
-			std::vector<int>::iterator it_perim;
-			std::vector<SDFCorner>::iterator it_corner;
 			int switchnewind=-1;
 			int switcholdind=-1;
+			// 0, 1 (new tri)  , 2(old walk), 3 (finsih)
+			// 0, 4 (old walk) , 5(new tri) , 3 (finish)
 			while(mode != 3) 
 			{
-				// TODO abndere modi: in resultchain starten
+				int perimeter_found=-1;
+				int corner_found=-1;
 				switch(mode) {
 					case 0: // inaktiv im neuen aber bestehender punkt (0)
 						printf("mode 0 corner ind is %d\n",corners[corner_ind].ptind);
-					        it_perim = std::find(perimeter_inds.begin(),perimeter_inds.end(),corners[corner_ind].ptind);
-						if(it_perim != perimeter_inds.end()) {
-							// checking next node, if its inside
-							if(corners[(corner_ind+1)%corners_n].ptind < newptlimit)
+						for(int i=0;i<perimeter_n;i++) {
+							if(perimeter_inds[i] == corners[corner_ind].ptind) {
+								perimeter_found=i;
+							}
+						}
+						if(perimeter_found != -1) {
+							// coincident point in the back not acceptable
+							if(corners[(corner_ind+corners_n-1)%corners_n].ptind  ==  perimeter_inds[(perimeter_found+1)%perimeter_n])
+							{
+								printf("Skip abutting\n");
+								corner_ind=(corner_ind+1)%corners_n;
+								break;
+							}
+
+							if(corners[(corner_ind+1)%corners_n].ptind < newptlimit) // its an old point 
 							{
 								// its inside
 								printf("change to mode 4\n");
-								switcholdind=*it_perim;
+								switcholdind=perimeter_inds[perimeter_found];
 								mode=4;
 							} else {
 								// its outside
 								printf("change to mode 1\n");
-								switchnewind=*it_perim;
+								printf("ind is %d/%d\n",perimeter_found,perimeter_inds[perimeter_found]);
+								switchnewind=perimeter_inds[perimeter_found];
 								mode=1;
 							}
 							break;
@@ -682,28 +695,26 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 						corner_ind=(corner_ind+1)%corners_n;
 						break;
 					case 1: // aktiv im neuen
-						printf("mode 1 corner ind is %d\n",corners[corner_ind].ptind);
-					        it_perim = std::find(perimeter_inds.begin(),perimeter_inds.end(),corners[corner_ind].ptind);
-						if(it_perim != perimeter_inds.end() && *it_perim != switchnewind) {
-							printf("change to mode2\n");
-							switcholdind=*it_perim;
-							resultchain.push_back(corners[corner_ind].ptind);
-							mode=2;perimeter_ind=switcholdind; 
-							break; 
-						}
-						tri.i[0]=baseptind;
-						tri.i[1]=corners[corner_ind].ptind;
-						tri.i[2]=corners[(corner_ind+1)%corners_n].ptind;
-						tris.push_back(tri);
-						resultchain.push_back(corners[corner_ind].ptind);
-						corner_ind=(corner_ind+1)%corners_n;
-						break;
 					case 5: // aktiv im neuen
-						printf("mode 5 corner ind is %d\n",corners[corner_ind].ptind);
-					        it_perim = std::find(perimeter_inds.begin(),perimeter_inds.end(),corners[corner_ind].ptind);
-						if(it_perim != perimeter_inds.end() && *it_perim != switchnewind ) {
-							printf("change to mode3\n");
-							mode=3; 
+						printf("mode %d corner ind is %d\n",mode, corners[corner_ind].ptind);
+						for(int i=0;i<perimeter_n;i++) {
+							if(perimeter_inds[i] == corners[corner_ind].ptind) {
+								perimeter_found=i;
+							}
+						}
+						if(perimeter_found != -1  && perimeter_inds[perimeter_found] != switchnewind) {
+							if(mode == 1) {
+								printf("change to mode 2\n");
+								printf(" content is %d\n",perimeter_inds[perimeter_found]);
+								switcholdind=perimeter_inds[perimeter_found];
+								resultchain.push_back(corners[corner_ind].ptind);
+								mode=2;
+								perimeter_ind=perimeter_found;  
+							}
+							if(mode == 5) {
+								printf("change to mode 3\n");
+								mode=3; 
+							}
 							break; 
 						}
 						tri.i[0]=baseptind;
@@ -713,28 +724,28 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 						resultchain.push_back(corners[corner_ind].ptind);
 						corner_ind=(corner_ind+1)%corners_n;
 						break;
-
 
 					case 2: // aktiv im alten
-						printf("mode 2 perimeter ind is %d\n",perimeter_inds[perimeter_ind]);
-						if(perimeter_inds[perimeter_ind] == switchnewind) { mode=3; break ; }
-						resultchain.push_back(perimeter_inds[perimeter_ind]);
-						perimeter_ind=(perimeter_ind+1)%perimeter_n; 
-						break;
 					case 4: // aktiv im alten
-						printf("mode 4 perimeter ind is %d switcholdind=%d\n",perimeter_inds[perimeter_ind],switcholdind);
-					        it_corner = std::find_if(corners.begin(),corners.end(), 
-							[&](const SDFCorner& input){
-								return input.ptind == perimeter_inds[perimeter_ind] && input.ptind != switcholdind;  
-							});
-						if(it_corner != corners.end()) {
-							switchnewind= perimeter_inds[perimeter_ind] ;
-							for(int i=0;i<corners_n;i++) { // TODO besser
-								if(corners[i].ptind == switchnewind)
-									corner_ind=i;
+						printf("mode %d perimeter ind is %d switcholdind=%d\n",mode, perimeter_inds[perimeter_ind],switcholdind);
+						if(mode == 2) {
+							if(perimeter_inds[perimeter_ind] == switchnewind) { mode=3; break ; }
+						}
+						if(mode == 4) {
+							for(int i=0;i<corners_n;i++) {
+								if(corners[i].ptind == perimeter_inds[perimeter_ind] && corners[i].ptind != switcholdind) {
+									corner_found=i;
+								}
 							}
-							mode=5; 
-							break; 
+							if(corner_found != -1) {
+								switchnewind= perimeter_inds[perimeter_ind] ;
+								for(int i=0;i<corners_n;i++) { 
+									if(corners[i].ptind == switchnewind)
+										corner_ind=i;
+								}
+								mode=5; 
+								break; 
+							}
 						}
 						resultchain.push_back(perimeter_inds[perimeter_ind]);
 						perimeter_ind=(perimeter_ind+1)%perimeter_n; 
@@ -744,6 +755,25 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 				}
 			}
 			printf("finished\n");
+			// now fix acute notches
+			int nr=resultchain.size();
+			for(int i=0;i<nr;i++)
+			{
+				int i1=resultchain[(i+nr-1)%nr];
+				int i2=resultchain[i];
+				int i3=resultchain[(i+1)%nr];
+				double dist=(pts[i3].pos-pts[i1].pos).norm(); // TODO check if notch, not peak
+				if(dist < res*1.5) {
+					printf("doing shortcut\n");
+					resultchain.erase(resultchain.begin() + i);
+					tri.i[0]=i1;
+					tri.i[1]=i2;
+					tri.i[2]=i3;
+					tris.push_back(tri);
+					i--;
+					nr--;
+				}
+			}
 			for(int i=0;i<resultchain.size();i++) printf("%d ",resultchain[i]);
 			printf("\n");
 			perimeter_inds = resultchain;
