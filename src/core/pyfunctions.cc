@@ -348,17 +348,19 @@ PyObject *python_frep(PyObject *self, PyObject *args, PyObject *kwargs)
   PyObject *expression=NULL;
   PyObject *bmin=NULL, *bmax=NULL;
   double res=10;
+  int maxrounds=5;
 
-  char *kwlist[] = {"exp","min","max","res", NULL};
+  char *kwlist[] = {"exp","min","max","res", "maxrounds",NULL};
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OOO|d", kwlist,
+  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OOO|di", kwlist,
                                    &expression,
-				   &bmin, &bmax, &res
+				   &bmin, &bmax, &res, &maxrounds
 				   )) return NULL;
 
   python_vectorval(bmin, &(node->x1), &(node->y1), &(node->z1));
   python_vectorval(bmax, &(node->x2), &(node->y2), &(node->z2));
   node->res = res;
+  node->maxrounds = maxrounds;
 
   if(expression->ob_type == &PyLibFiveType) {
   	node->expression = expression;

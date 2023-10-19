@@ -83,5 +83,6 @@ public:
   double x1,y1,z1;
   double x2,y2,z2;
   double res;
+  int maxrounds;
 };
 

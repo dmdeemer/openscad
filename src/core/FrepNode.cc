@@ -481,7 +481,7 @@ void draw_line(Vector3d  p1, Vector3d p2,std::vector<SDFVertex> &pts,std::vector
 	tri.i[0]=inds[2]; tri.i[1]=inds[4]; tri.i[2]=inds[6]; tris.push_back(tri);
 }
 
-PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
+PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol,int maxrounds)
 {
 	Vector3d xdir(1,0,0),ydir(0,1,0),zdir(0,0,1);
 	double res=0.1; // TODO fix
@@ -509,7 +509,7 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 	pts.push_back(v);
 
 	int round=0;
-	while(perimeter_inds.size() > 0 && round < 5) // continue until perimeter is not closed
+	while(perimeter_inds.size() > 0 && round <= maxrounds) // continue until perimeter is not closed
 	{
 		printf("Round %d\n",round);
 		printf("%d points in perimeter\n",perimeter_inds.size());
@@ -591,9 +591,9 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 		{
 			printf("i=%d\n",i);
 			double gap=((i==corners.size()-1)?360:corners[i+1].ang)-corners[i].ang;
-			printf("gap=%g\n",gap);
+//			printf("gap=%g\n",gap);
 			int ranges=ceil(((double)gap/71));
-			printf("ranges=%d\n",ranges);
+//			printf("ranges=%d\n",ranges);
 			double baseang=corners[i].ang;
 			Vector3d basepos=pts[corners[i].ptind].pos;
 			for(int j=0;j<ranges-1;j++) {
@@ -685,7 +685,6 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 							} else {
 								// its outside
 								printf("change to mode 1\n");
-								printf("ind is %d/%d\n",perimeter_found,perimeter_inds[perimeter_found]);
 								switchnewind=perimeter_inds[perimeter_found];
 								mode=1;
 							}
@@ -705,7 +704,6 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 						if(perimeter_found != -1  && perimeter_inds[perimeter_found] != switchnewind) {
 							if(mode == 1) {
 								printf("change to mode 2\n");
-								printf(" content is %d\n",perimeter_inds[perimeter_found]);
 								switcholdind=perimeter_inds[perimeter_found];
 								resultchain.push_back(corners[corner_ind].ptind);
 								mode=2;
@@ -720,6 +718,7 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 						tri.i[0]=baseptind;
 						tri.i[1]=corners[corner_ind].ptind;
 						tri.i[2]=corners[(corner_ind+1)%corners_n].ptind;
+						printf("Add tri\n");
 						tris.push_back(tri);
 						resultchain.push_back(corners[corner_ind].ptind);
 						corner_ind=(corner_ind+1)%corners_n;
@@ -727,7 +726,7 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 
 					case 2: // aktiv im alten
 					case 4: // aktiv im alten
-						printf("mode %d perimeter ind is %d switcholdind=%d\n",mode, perimeter_inds[perimeter_ind],switcholdind);
+						printf("mode %d perimeter ind is %d \n",mode, perimeter_inds[perimeter_ind]);
 						if(mode == 2) {
 							if(perimeter_inds[perimeter_ind] == switchnewind) { mode=3; break ; }
 						}
@@ -760,17 +759,18 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 			for(int i=0;i<nr;i++)
 			{
 				int i1=resultchain[(i+nr-1)%nr];
-				int i2=resultchain[i];
-				int i3=resultchain[(i+1)%nr];
+				int i2=resultchain[(i+nr+0)%nr];
+				int i3=resultchain[(i+nr+1)%nr];
 				double dist=(pts[i3].pos-pts[i1].pos).norm(); // TODO check if notch, not peak
-				if(dist < res*1.5) {
-					printf("doing shortcut\n");
+				if(round == 61) printf("Checking at pos %d: %d-%d/%d dist=%g\n",i,i1,i2,i3,dist);
+				if(dist < res*1.5 && round < 62) {
+					printf("doing shortcut from %d to %d skipping %d\n",i1,i3,i2);
 					resultchain.erase(resultchain.begin() + i);
 					tri.i[0]=i1;
 					tri.i[1]=i2;
 					tri.i[2]=i3;
 					tris.push_back(tri);
-					i--;
+					i-=2;
 					nr--;
 				}
 			}
@@ -781,6 +781,7 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol)
 
 
 		round++;
+		printf("####################\n");
 	}
 	auto p = new PolySet(3, true);
 
@@ -814,7 +815,7 @@ const Geometry *FrepNode::createGeometry() const
 	if(exp->ob_type == &PyLibFiveType) {
 		std::vector<Tree *> tree = PyLibFiveObjectToTree(exp);
 #ifdef MY_SDF
-		p = MySDF(*tree[0],Vector3d(this->x1,this->y1,this->z1), Vector3d(this->x2,this->y2,this->z2),0.001);
+		p = MySDF(*tree[0],Vector3d(this->x1,this->y1,this->z1), Vector3d(this->x2,this->y2,this->z2),0.001,this->maxrounds);
 #else		
 		p = new PolySet(3, true);
 		printf("render start\n");
