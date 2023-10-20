@@ -490,11 +490,11 @@ void draw_diamond(Vector3d  ptx, std::vector<SDFVertex> &pts,std::vector<SDFTria
 	{
 		SDFVertex pt;
 		pt.pos=ptx;
-		pt.pos[i] -=0.05;
+		pt.pos[i] -=0.02;
 		inds.push_back(pts.size());
 		pts.push_back(pt);
 		pt.pos=ptx;
-		pt.pos[i] += 0.05;
+		pt.pos[i] += 0.02;
 		inds.push_back(pts.size());
 		pts.push_back(pt);
 	}
@@ -601,6 +601,11 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol,int max
 			corners[i].ang=ang;
 		}
 		std::sort(corners.begin(),corners.end(), [](SDFCorner &a, SDFCorner &b){ return a.ang<b.ang; }); // sort corners by angle
+		printf("Edges after sorting \n",corners.size());
+		for(int i=0;i<corners.size();i++) {
+			Vector3d &pt=pts[corners[i].ptind].pos;
+			printf("%d ang=%f %d %g/%g/%g \n",i,corners[i].ang,corners[i].ptind,pt[0],pt[1],pt[2]);
+		}
 		// TODO align start pt
 		int cornerstartind=-1;
 		int cornerendind=-1;
@@ -623,8 +628,7 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol,int max
 			exit(1);
 		}
 		cornerendind=cornerstartind;
-
-		// TODO span begin end end along old perimeter
+		printf("cornerstartind=%d-%d\n",cornerstartind,cornerendind);
 
 		for(int i=0;i<cornerstartind;i++) { //  cornerstartind muss auf 0
 			corners.push_back(corners[i]);
@@ -632,33 +636,63 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol,int max
 		corners.erase(corners.begin(), corners.begin()+cornerstartind);
 		cornerendind = (cornerendind-cornerstartind+corners_n)%corners_n;
 		cornerstartind=0;
-//		printf("perimeters are \n");
-//		for(int i=0;i<perimeters_n;i++) {
-//			printf("%d ",perimeter_inds[i]);
-//		}
-//		printf("\n");
-//		printf("corners  are \n");
-//		for(int i=0;i<corners_n;i++) {
-//			printf("%d ",corners[i].ptind);
-//		}
-//		printf("\n");
+
+		printf("Edges after sorting and realign are\n",corners.size());
+		for(int i=0;i<corners.size();i++) {
+			Vector3d &pt=pts[corners[i].ptind].pos;
+			printf("%d ang=%f %d %g/%g/%g \n",i,corners[i].ang,corners[i].ptind,pt[0],pt[1],pt[2]);
+		}
+
+		printf("perimeters are \n");
+		for(int i=0;i<perimeters_n;i++) {
+			printf("%d ",perimeter_inds[i]);
+		}
+		printf("\n");
+		printf("corners  are \n");
+		for(int i=0;i<corners_n;i++) {
+			printf("%d ",corners[i].ptind);
+		}
+		printf("\n");
 		if(round > 0) {
-			if(corners[(cornerendind+ 2)%corners_n].ptind == perimeter_inds[(perimeterendind+perimeters_n-2)%perimeters_n]) {
-				cornerendind= (cornerendind+ 2)%corners_n;
-				perimeterendind =(perimeterendind+perimeters_n-2)%perimeters_n; 
-			} else {
+			int found=0;
+			for(int i=1;i<corners_n;i++) {
+				if(corners[(cornerendind+ i)%corners_n].ptind == perimeter_inds[(perimeterendind+perimeters_n-2)%perimeters_n]) {
+					cornerendind= (cornerendind+ i)%corners_n;
+					perimeterendind =(perimeterendind+perimeters_n-2)%perimeters_n; 
+					found=1;
+					break;
+				} 
+				
+			}
+			if(!found) {
 				printf("TODO cannot guess other end\n");
 			}
 
+		} else {
 		}
 
+		// TODO span begin end end along old perimeter
+		//  TODO gap could ne anywhere
+		corners_n = corners.size();
+		perimeters_n = perimeter_inds.size();
 		printf("cornerind %d-%d perimeter %d-%d\n",cornerstartind, cornerendind, perimeterstartind, perimeterendind);
+		while(corners[(cornerendind+1)%corners_n].ptind == perimeter_inds[(perimeterendind+perimeters_n-1)%perimeters_n]) {
+			cornerendind=(cornerendind+1)%corners_n;
+			perimeterendind=(perimeterendind+perimeters_n-1)%perimeters_n;
+			printf("progress1 cornerind %d-%d perimeter %d-%d\n",cornerstartind, cornerendind, perimeterstartind, perimeterendind);
+		}
+
+		while(corners[(cornerstartind+corners_n-1)%corners_n].ptind == perimeter_inds[(perimeterstartind+1)%perimeters_n]) {
+			cornerstartind=(cornerstartind+corners_n-1)%corners_n;
+			perimeterstartind=(perimeterstartind+1)%perimeters_n;
+			printf("progress2 cornerind %d-%d perimeter %d-%d\n",cornerstartind, cornerendind, perimeterstartind, perimeterendind);
+		}
+
 		printf("Edges before fill are %d %d\n",cornerstartind, cornerendind);
 		double gap;
 		if(round == 0) gap=360-corners[cornerendind].ang; 
 		else gap=corners[cornerstartind].ang-corners[cornerendind].ang; 
 		if(gap < 0) gap += 360;
-
 		printf("gap=%g\n",gap);
 		int ranges=ceil(((double)gap/71));
 		printf("ranges=%d\n",ranges);
@@ -681,7 +715,8 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol,int max
 			map3d.add(newpt.pos,pts.size());
 			pts.push_back(newpt);
 			corner.is_new=1;
-			corners.push_back(corner); 
+			corners.insert(corners.begin()+cornerendind+j+1,corner);
+			if(cornerstartind >= cornerendind+j && round > 0) cornerstartind++; 
 			printf("now len is %d\n",corners.size());
 		}
 
@@ -712,6 +747,29 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol,int max
 			resultchain.push_back(corners[i].ptind);
 			i=(i+1)%corners_n;
 		} while(i != cornerstartind);
+
+		int nr=resultchain.size();
+		for(int j=0;j<resultchain.size();j++) printf("%d ",resultchain[j]); printf("\n");
+		for(int i=0;i<nr;i++)
+		{
+			int i1=resultchain[(i+nr-1)%nr];
+			int i2=resultchain[(i+nr+0)%nr];
+			int i3=resultchain[(i+nr+1)%nr];
+			Vector3d r1=(pts[i1].pos-pts[i2].pos).normalized();
+			Vector3d r2=(pts[i3].pos-pts[i2].pos).normalized();
+			if(acos(r1.dot(r2))*180/3.14 <90){ // stumpfer winkel
+//			if(dist < res*1.5) {
+				printf("doing shortcut from %d to %d skipping %d, i=%d\n",i1,i3,i2,i);
+				resultchain.erase(resultchain.begin() + (i+nr)%nr);
+				for(int j=0;j<resultchain.size();j++) printf("%d ",resultchain[j]); printf("\n");
+				tri.i[0]=i1;
+				tri.i[1]=i2;
+				tri.i[2]=i3;
+				tris.push_back(tri);
+				i-=2;
+				nr--;
+			}
+		}
 
 		printf("final result are are \n");
 		for(int i=0;i<resultchain.size();i++) {
