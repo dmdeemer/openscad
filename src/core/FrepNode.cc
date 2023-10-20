@@ -508,7 +508,7 @@ void draw_diamond(Vector3d  ptx, std::vector<SDFVertex> &pts,std::vector<SDFTria
 	tri.i[0]=inds[0]; tri.i[1]=inds[2]; tri.i[2]=inds[4]; tris.push_back(tri);
 }
 
-//#define NEW_ALG
+#define NEW_ALG
 PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol,int maxrounds)
 {
 	Vector3d xdir(1,0,0),ydir(0,1,0),zdir(0,0,1);
@@ -559,22 +559,18 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol,int max
 		SDFCorner corner;
 		for(int i=0;i<result.size();i++)
 		{
-#ifdef NEW_ALG
-			corner.ptind=resultind[i];
-			corner.is_new=0;
-			corners.push_back(corner);
-#else
 			if(resultind[i] != baseptind){
 				corner.ptind=resultind[i];
 				corner.is_new=0;
 				corners.push_back(corner);
 			}
-#endif
 		}
-		printf("%d points founda after filtering\n",corners.size());
-
-		// special case: no points
+		printf("%d points found after filtering\n",corners.size());
+#ifdef NEW_ALG
+		if(perimeter_inds.size() < 2) {
+#else	       	
 		if(corners.size() == 0) {
+#endif			
 			printf("No neighbor points\n");
 			// no neighboring points, create 1st one
 			Vector3d newdir;
@@ -591,34 +587,42 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol,int max
 
 			corner.ptind = pts.size();
 			map3d.add(newpt.pos,pts.size());
-#ifdef NEW_ALG
-			perimeter_inds.push_back(pts.size());
-#endif
-			pts.push_back(newpt);
-
-
 			corners.push_back(corner);
+			pts.push_back(newpt);
 		}
 #ifdef NEW_ALG
 		corners[0].ang=0;
+		Vector3d side1=(pts[corners[0].ptind].pos-basept.pos).cross(basept.norm).cross(basept.norm).normalized();
+		for(int i=1;i<corners.size();i++) {
+			Vector3d side2=(pts[corners[i].ptind].pos-basept.pos).cross(basept.norm).cross(basept.norm).normalized();
+			double ang=acos(side1.dot(side2))*180.0/3.1415926;
+			if(side1.cross(side2).dot(basept.norm) < 0) ang=-ang;
+			while(ang < 0) ang+= 360;
+			corners[i].ang=ang;
+		}
 		std::sort(corners.begin(),corners.end(), [](SDFCorner &a, SDFCorner &b){ return a.ang<b.ang; }); // sort corners by angle
 		// TODO align start pt
 		int cornerstartind=-1;
 		int cornerendind=-1;
-		int perimeterstartind=perimeter_inds.size()-1; // TODO gleich wie baseptind
-		int perimeterendind=perimeterstartind;							       
+		int perimeterstartind=0; // TODO gleich wie baseptind ?
+		int perimeterendind=perimeterstartind;
+		int perimeters_n=perimeter_inds.size();
+
 
 		int corners_n = corners.size();
-		for(int i=0;i<corners_n;i++) {
-			if(corners[i].ptind == perimeter_inds[perimeterstartind]) {
-				cornerstartind=i;
-				cornerendind=i;
+		if(round == 0) { cornerstartind=0; }
+		else {
+			for(int i=0;i<corners_n;i++) {
+				if(corners[i].ptind == perimeter_inds[perimeterstartind]) {
+					cornerstartind=i;
+				}
 			}
 		}
 		if(cornerstartind == -1) {
 			printf("Program error!\n");
 			exit(1);
 		}
+		cornerendind=cornerstartind;
 
 		// TODO span begin end end along old perimeter
 
@@ -628,14 +632,95 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol,int max
 		corners.erase(corners.begin(), corners.begin()+cornerstartind);
 		cornerendind = (cornerendind-cornerstartind+corners_n)%corners_n;
 		cornerstartind=0;
+//		printf("perimeters are \n");
+//		for(int i=0;i<perimeters_n;i++) {
+//			printf("%d ",perimeter_inds[i]);
+//		}
+//		printf("\n");
+//		printf("corners  are \n");
+//		for(int i=0;i<corners_n;i++) {
+//			printf("%d ",corners[i].ptind);
+//		}
+//		printf("\n");
+		if(round > 0) {
+			if(corners[(cornerendind+ 2)%corners_n].ptind == perimeter_inds[(perimeterendind+perimeters_n-2)%perimeters_n]) {
+				cornerendind= (cornerendind+ 2)%corners_n;
+				perimeterendind =(perimeterendind+perimeters_n-2)%perimeters_n; 
+			} else {
+				printf("TODO cannot guess other end\n");
+			}
+
+		}
+
 		printf("cornerind %d-%d perimeter %d-%d\n",cornerstartind, cornerendind, perimeterstartind, perimeterendind);
-		// TODO fill gaps
-		// TODO draw triangles and combine
+		printf("Edges before fill are %d %d\n",cornerstartind, cornerendind);
+		double gap;
+		if(round == 0) gap=360-corners[cornerendind].ang; 
+		else gap=corners[cornerstartind].ang-corners[cornerendind].ang; 
+		if(gap < 0) gap += 360;
+
+		printf("gap=%g\n",gap);
+		int ranges=ceil(((double)gap/71));
+		printf("ranges=%d\n",ranges);
+		double baseang=corners[cornerendind].ang;
+		Vector3d basepos=pts[corners[cornerendind].ptind].pos;
+
+		for(int j=0;j<ranges-1;j++) {
+			corner.ang=baseang+gap*(j+1)/ranges;
+			Transform3d mat=Transform3d::Identity();
+			Matrix3d rots=angle_axis_degrees(corner.ang-baseang, basept.norm);
+			mat.rotate(rots);
+
+			SDFVertex newpt;
+		        newpt.pos = basepos- basept.pos;
+			printf("pos=%g/%g/%g\n",newpt.pos[0],newpt.pos[1],newpt.pos[2]);
+		 	newpt.pos = ( mat * newpt.pos) + basept.pos;
+			SDF_align(tr,newpt ,tol);
+
+			corner.ptind = pts.size();
+			map3d.add(newpt.pos,pts.size());
+			pts.push_back(newpt);
+			corner.is_new=1;
+			corners.push_back(corner); 
+			printf("now len is %d\n",corners.size());
+		}
+
 		printf("Edges are\n",corners.size());
 		for(int i=0;i<corners.size();i++) {
 			Vector3d &pt=pts[corners[i].ptind].pos;
 			printf("%d ang=%f %d %g/%g/%g \n",i,corners[i].ang,corners[i].ptind,pt[0],pt[1],pt[2]);
 		}
+		//
+//  draw triangles and combine
+		int n=corners.size();
+		for(int i=cornerendind;i<n;i++)
+		{
+			tri.i[0]=baseptind;
+			tri.i[1]=corners[i].ptind;
+			tri.i[2]=corners[(i+1)%n].ptind;
+			tris.push_back(tri);
+		}
+		printf("cornerind %d-%d perimeter %d-%d\n",cornerstartind, cornerendind, perimeterstartind, perimeterendind);
+		std::vector<int> resultchain; // now combine
+		perimeters_n = perimeter_inds.size();
+		for(int i=perimeterstartind;i != perimeterendind;i=(i+1)%(perimeters_n)) {
+			resultchain.push_back(perimeter_inds[i]);
+		}
+		int i=cornerendind;
+		corners_n=corners.size();
+		do {
+			resultchain.push_back(corners[i].ptind);
+			i=(i+1)%corners_n;
+		} while(i != cornerstartind);
+
+		printf("final result are are \n");
+		for(int i=0;i<resultchain.size();i++) {
+			printf("%d ",resultchain[i]);
+		}
+		printf("\n");
+		perimeter_inds=resultchain;
+
+		
 #else		
 		printf("calc other angles\n");
 		corners[0].ang=0;
