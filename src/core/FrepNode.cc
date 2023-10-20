@@ -481,6 +481,34 @@ void draw_line(Vector3d  p1, Vector3d p2,std::vector<SDFVertex> &pts,std::vector
 	tri.i[0]=inds[2]; tri.i[1]=inds[4]; tri.i[2]=inds[6]; tris.push_back(tri);
 }
 
+void draw_diamond(Vector3d  ptx, std::vector<SDFVertex> &pts,std::vector<SDFTriangle> &tris)
+{
+	std::vector<int> inds;
+	SDFTriangle tri;
+	printf("Draw diamond %g/%g/%g\n",ptx[0],ptx[1],ptx[2]);
+	for(int i=0;i<3;i++)
+	{
+		SDFVertex pt;
+		pt.pos=ptx;
+		pt.pos[i] -=0.05;
+		inds.push_back(pts.size());
+		pts.push_back(pt);
+		pt.pos=ptx;
+		pt.pos[i] += 0.05;
+		inds.push_back(pts.size());
+		pts.push_back(pt);
+	}
+	tri.i[0]=inds[0]; tri.i[1]=inds[3]; tri.i[2]=inds[5]; tris.push_back(tri);
+	tri.i[0]=inds[3]; tri.i[1]=inds[1]; tri.i[2]=inds[5]; tris.push_back(tri);
+	tri.i[0]=inds[1]; tri.i[1]=inds[2]; tri.i[2]=inds[5]; tris.push_back(tri);
+	tri.i[0]=inds[2]; tri.i[1]=inds[0]; tri.i[2]=inds[5]; tris.push_back(tri);
+	tri.i[0]=inds[3]; tri.i[1]=inds[0]; tri.i[2]=inds[4]; tris.push_back(tri);
+	tri.i[0]=inds[1]; tri.i[1]=inds[3]; tri.i[2]=inds[4]; tris.push_back(tri);
+	tri.i[0]=inds[2]; tri.i[1]=inds[1]; tri.i[2]=inds[4]; tris.push_back(tri);
+	tri.i[0]=inds[0]; tri.i[1]=inds[2]; tri.i[2]=inds[4]; tris.push_back(tri);
+}
+
+//#define NEW_ALG
 PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol,int maxrounds)
 {
 	Vector3d xdir(1,0,0),ydir(0,1,0),zdir(0,0,1);
@@ -527,20 +555,21 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol,int max
 
 		int newptlimit = pts.size();
 
-		// filter center point
 		std::vector<SDFCorner> corners; 
 		SDFCorner corner;
 		for(int i=0;i<result.size();i++)
 		{
-			if(result[i] == basept.pos){
-				result.erase(result.begin() + i);
-				resultind.erase(resultind.begin() + i);
-				i--;
-			} else {
+#ifdef NEW_ALG
+			corner.ptind=resultind[i];
+			corner.is_new=0;
+			corners.push_back(corner);
+#else
+			if(resultind[i] != baseptind){
 				corner.ptind=resultind[i];
 				corner.is_new=0;
 				corners.push_back(corner);
 			}
+#endif
 		}
 		printf("%d points founda after filtering\n",corners.size());
 
@@ -562,11 +591,52 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol,int max
 
 			corner.ptind = pts.size();
 			map3d.add(newpt.pos,pts.size());
+#ifdef NEW_ALG
+			perimeter_inds.push_back(pts.size());
+#endif
 			pts.push_back(newpt);
 
 
 			corners.push_back(corner);
 		}
+#ifdef NEW_ALG
+		corners[0].ang=0;
+		std::sort(corners.begin(),corners.end(), [](SDFCorner &a, SDFCorner &b){ return a.ang<b.ang; }); // sort corners by angle
+		// TODO align start pt
+		int cornerstartind=-1;
+		int cornerendind=-1;
+		int perimeterstartind=perimeter_inds.size()-1; // TODO gleich wie baseptind
+		int perimeterendind=perimeterstartind;							       
+
+		int corners_n = corners.size();
+		for(int i=0;i<corners_n;i++) {
+			if(corners[i].ptind == perimeter_inds[perimeterstartind]) {
+				cornerstartind=i;
+				cornerendind=i;
+			}
+		}
+		if(cornerstartind == -1) {
+			printf("Program error!\n");
+			exit(1);
+		}
+
+		// TODO span begin end end along old perimeter
+
+		for(int i=0;i<cornerstartind;i++) { //  cornerstartind muss auf 0
+			corners.push_back(corners[i]);
+		}
+		corners.erase(corners.begin(), corners.begin()+cornerstartind);
+		cornerendind = (cornerendind-cornerstartind+corners_n)%corners_n;
+		cornerstartind=0;
+		printf("cornerind %d-%d perimeter %d-%d\n",cornerstartind, cornerendind, perimeterstartind, perimeterendind);
+		// TODO fill gaps
+		// TODO draw triangles and combine
+		printf("Edges are\n",corners.size());
+		for(int i=0;i<corners.size();i++) {
+			Vector3d &pt=pts[corners[i].ptind].pos;
+			printf("%d ang=%f %d %g/%g/%g \n",i,corners[i].ang,corners[i].ptind,pt[0],pt[1],pt[2]);
+		}
+#else		
 		printf("calc other angles\n");
 		corners[0].ang=0;
 		Vector3d side1=(pts[corners[0].ptind].pos-basept.pos).cross(basept.norm).cross(basept.norm).normalized();
@@ -763,7 +833,7 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol,int max
 				int i3=resultchain[(i+nr+1)%nr];
 				double dist=(pts[i3].pos-pts[i1].pos).norm(); // TODO check if notch, not peak
 				if(round == 61) printf("Checking at pos %d: %d-%d/%d dist=%g\n",i,i1,i2,i3,dist);
-				if(dist < res*1.5 && round < 62) {
+				if(dist < res*1.5) {
 					printf("doing shortcut from %d to %d skipping %d\n",i1,i3,i2);
 					resultchain.erase(resultchain.begin() + i);
 					tri.i[0]=i1;
@@ -779,7 +849,10 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol,int max
 			perimeter_inds = resultchain;
 		}
 
-
+#endif
+		if(round == maxrounds) {
+//			draw_diamond(pts[baseptind].pos,pts,tris);
+		}
 		round++;
 		printf("####################\n");
 	}
