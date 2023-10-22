@@ -523,8 +523,8 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol,int max
 	pmid[0]=(pmin[0]+pmax[0])/2.0;
 	pmid[1]=(pmin[0]+pmax[1])/2.0;
 	pmid[2]=(pmin[0]+pmax[2])/2.0;
-//	int debug=maxrounds;
-//	maxrounds=28;
+	int debug=maxrounds;
+	maxrounds=68;
 
 	Map3D map3d(pmin, pmax); // Create initial point and assign at as single perimeter point
 	v.norm=Vector3d(0,0,0);
@@ -568,10 +568,11 @@ PolySet *MySDF(libfive::Tree &tr,Vector3d pmin, Vector3d pmax,double tol,int max
 			}
 		}
 		printf("%d points found after filtering\n",corners.size());
-		if(round == 28) {
-//			draw_diamond(pts[debug].pos,pts,tris);
+		if(round == 68) {
+			draw_diamond(pts[debug].pos,pts,tris);
 //			for(int i=0;i<corners.size();i++)
 //				draw_diamond(pts[corners[i].ptind].pos,pts,tris);
+			goto e;
 		}
 		if(perimeter_inds.size() < 2) {
 			printf("No neighbor points\n");
