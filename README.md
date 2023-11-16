@@ -32,16 +32,20 @@ STL and OFF file formats.
 
 # Contents
 
-- [Getting Started](#getting-started)
+- [What is OpenSCAD?](#what-is-openscad)
+- [Contents](#contents)
+- [Getting started](#getting-started)
 - [Documentation](#documentation)
-    - [Building OpenSCAD](#building-openscad)
-        - [Prerequisites](#prerequisites)
-        - [Getting the source code](#getting-the-source-code)
-        - [Building for macOS](#building-for-macos)
-        - [Building for Linux/BSD](#building-for-linuxbsd)
-        - [Building for Linux/BSD on systems with older or missing dependencies](#building-for-linuxbsd-on-systems-with-older-or-missing-dependencies)
-        - [Building for Windows](#building-for-windows)
-        - [Compilation](#compilation)
+  - [Building OpenSCAD](#building-openscad)
+    - [Prerequisites](#prerequisites)
+    - [Getting the source code](#getting-the-source-code)
+    - [Building for macOS](#building-for-macos)
+    - [Building for Linux/BSD](#building-for-linuxbsd)
+    - [Building for Linux/BSD on systems with older or missing dependencies](#building-for-linuxbsd-on-systems-with-older-or-missing-dependencies)
+    - [Building for Windows](#building-for-windows)
+    - [Compilation](#compilation)
+    - [Compilation for PythonSCAD on Ubuntu 20.04](#compilation-for-pythonscad-on-ubuntu-2004)
+    - [Running CI workflows locally](#running-ci-workflows-locally)
 
 # Getting started
 
@@ -245,6 +249,22 @@ https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/Building_OpenSCAD_from_Source
 Once built, you can run tests with `ctest` from the build directory.
 
 Note: Both `make` and `ctest` accepts a `-j N` argument for distributing the load over `N` parallel processes.
+
+### Compilation for PythonSCAD on Ubuntu 20.04
+
+(From https://pythonscad.org)
+
+* `git clone https://github.com/gsohler/openscad.git`
+* `cd openscad`
+* `git checkout python`
+* `git submodule update --init --recursive`
+* `sudo ./scripts/uni-get-dependencies.sh`
+* `# make sure to get cryptopp and python dev packages installed, additionally`
+* `mkdir build`
+* `cd build`
+* `cmake -DEXPERIMENTAL=1 -DENABLE_PYTHON=1 -DENABLE_LIBFIVE=1 -DENABLE_CRYPTOPP=0 ..`
+* `make -j6`
+* `sudo make install`
 
 ### Running CI workflows locally
 
